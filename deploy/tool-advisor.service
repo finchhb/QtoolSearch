@@ -1,0 +1,17 @@
+[Unit]
+Description=Tool Advisor (подбор токарных пластин)
+After=network.target
+
+[Service]
+User=advisor
+WorkingDirectory=/opt/tool-advisor
+EnvironmentFile=/opt/tool-advisor/.env
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/opt/tool-advisor/data
+
+[Install]
+WantedBy=multi-user.target

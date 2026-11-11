@@ -1,0 +1,181 @@
+"""
+src/training.py - обучение парсера на примерах технолога (без LLM).
+
+Таблица data/training_examples.csv (разделитель «;», открывается в Excel): запрос -> «правильный» ответ по мнению технолога
+(группа ISO, вид обработки, рекомендуемые артикулы) и комментарий. Её используют три механизма:
+  1. Точное совпадение запроса (после нормализации: регистр, ё, латиница/кириллица, знаки препинания): парсер применяет
+     группу ISO и вид обработки из примера, а рекомендованные артикулы (если они в наличии) ставятся первыми.
+  2. Подсказки правил: из запроса выделяются «подозрительные» токены (марки), технолог отмечает нужные — они дописываются
+     в data/materials.csv как правила «токен -> группа ISO», и парсер начинает узнавать марку в любых запросах.
+  3. Золотой набор для проверки: eval.py --training считает точность парсера без примеров и показывает, где он ещё ошибается.
+Отключить применение примеров: TRAINING_DISABLE=1.
+"""
+import csv
+import os
+import re
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+PATH = os.path.join("data", "training_examples.csv")
+MATERIALS_CSV = os.path.join("data", "materials.csv")
+FIELDS = ["id", "ts", "query", "query_norm", "parser_iso", "parser_operation", "parser_top_skus",
+          "correct_iso", "correct_operation", "correct_skus", "comment", "status", "rules_added"]
+ISO_OK = {"P", "M", "K", "N", "S", "H"}
+OP_OK = {"finishing", "semi_finishing", "roughing"}
+_LATIN2CYR = str.maketrans("abcehkmoptxy", "авсенкмортху")
+_lock = threading.Lock()
+_cache: Dict[str, Any] = {"mtime": 0.0, "rows": []}
+
+
+def normalize(text: str) -> str:
+    t = (text or "").lower().replace("ё", "е").translate(_LATIN2CYR)
+    t = re.sub(r"[^\w\-]+", " ", t, flags=re.U)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _read() -> List[Dict[str, str]]:
+    try:
+        mt = os.path.getmtime(PATH)
+    except OSError:
+        return []
+    if mt == _cache["mtime"]:
+        return _cache["rows"]
+    rows = []
+    try:
+        with open(PATH, "r", encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f, delimiter=";"):
+                if (r.get("query") or "").strip():
+                    rows.append({k: (r.get(k) or "") for k in FIELDS})
+    except Exception:
+        rows = []
+    _cache.update(mtime=mt, rows=rows)
+    return rows
+
+
+def _write(rows: List[Dict[str, str]]) -> None:
+    os.makedirs(os.path.dirname(PATH), exist_ok=True)
+    with open(PATH, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDS, delimiter=";", extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+    try:
+        _cache["mtime"] = os.path.getmtime(PATH)
+    except OSError:
+        pass
+    _cache["rows"] = rows
+
+
+def list_examples(limit: int = 300) -> List[Dict[str, str]]:
+    with _lock:
+        return list(_read())[-limit:][::-1]
+
+
+def count() -> int:
+    with _lock:
+        return len(_read())
+
+
+def add_example(query: str, correct_iso: str = "", correct_operation: str = "", correct_skus: str = "", comment: str = "",
+                parser: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    iso = (correct_iso or "").strip().upper()
+    op = (correct_operation or "").strip().lower()
+    op = {"medium": "semi_finishing"}.get(op, op)
+    skus = "; ".join(s.strip() for s in re.split(r"[;,\n]+", correct_skus or "") if s.strip())[:500]
+    entry = {
+        "id": "", "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "query": (query or "").strip()[:500],
+        "query_norm": normalize(query), "parser_iso": str((parser or {}).get("iso") or ""),
+        "parser_operation": str((parser or {}).get("operation") or ""),
+        "parser_top_skus": "; ".join((parser or {}).get("top_skus") or [])[:300],
+        "correct_iso": iso if iso in ISO_OK else "", "correct_operation": op if op in OP_OK else "",
+        "correct_skus": skus, "comment": (comment or "").strip()[:600], "status": "new", "rules_added": "",
+    }
+    with _lock:
+        rows = list(_read())
+        # тот же запрос ещё раз = обновление примера (последнее мнение технолога главное)
+        rows = [r for r in rows if r["query_norm"] != entry["query_norm"]]
+        entry["id"] = str(max([int(r["id"]) for r in rows if str(r["id"]).isdigit()] + [0]) + 1)
+        rows.append(entry)
+        _write(rows)
+    return entry
+
+
+def delete_example(ex_id: str) -> bool:
+    with _lock:
+        rows = list(_read())
+        new = [r for r in rows if r["id"] != str(ex_id)]
+        if len(new) == len(rows):
+            return False
+        _write(new)
+        return True
+
+
+def lookup(query: str) -> Optional[Dict[str, str]]:
+    """Пример технолога для запроса (точное совпадение после нормализации) или None."""
+    if os.environ.get("TRAINING_DISABLE") == "1":
+        return None
+    qn = normalize(query)
+    with _lock:
+        for r in reversed(_read()):
+            if r["query_norm"] == qn and r["status"] != "rejected" and (r["correct_iso"] or r["correct_operation"] or r["correct_skus"]):
+                return r
+    return None
+
+
+# --- подсказки правил материалов --------------------------------------------------------------------------
+_INSERT_RE = re.compile(r"^[cwtdsvr][nctbpefg][mgu][a-z]?\d*[a-z]?\d*$", re.I)
+_STOP = {"точение", "чистовое", "чистовая", "черновая", "черновое", "получистовая", "получистовое", "обработка", "пластина", "пластины",
+         "подбери", "нужна", "нужно", "для", "по", "из", "под", "при", "без", "что", "как", "мм", "шт", "стали", "сталь"}
+
+
+def suggest_tokens(query: str) -> List[str]:
+    """Кандидаты в «марки материала»: токены с цифрой и буквой, либо с заглавными буквами в исходном запросе; без кодов пластин."""
+    out: List[str] = []
+    for tok in re.findall(r"[0-9A-Za-zА-Яа-яЁё][0-9A-Za-zА-Яа-яЁё\-./]{1,}", query or ""):
+        low = tok.lower().strip("-./")
+        if len(low) < 3 or low in _STOP or _INSERT_RE.match(low) or re.fullmatch(r"[\d.,/\-]+", low):
+            continue
+        has_digit, has_alpha = bool(re.search(r"\d", low)), bool(re.search(r"[a-zа-яё]", low))
+        upper_cnt = sum(1 for c in tok if c.isupper())
+        if (has_digit and has_alpha) or upper_cnt >= 2:
+            if low not in out:
+                out.append(low)
+    return out[:8]
+
+
+def add_material_rules(tokens: List[str], iso: str, note: str = "") -> int:
+    """Дописывает правила «марка -> группа ISO» в data/materials.csv (с границами слова) и возвращает число добавленных."""
+    iso = (iso or "").strip().upper()
+    if iso not in ISO_OK:
+        return 0
+    existing = ""
+    if os.path.exists(MATERIALS_CSV):
+        with open(MATERIALS_CSV, "r", encoding="utf-8-sig") as f:
+            existing = f.read()
+    added = 0
+    lines = []
+    for t in tokens:
+        t = normalize(t).replace(" ", "")
+        if len(t) < 3:
+            continue
+        esc = re.escape(t)
+        pat = r"(?<![а-яa-z0-9])" + esc + r"(?![а-яa-z0-9])"
+        if pat in existing:
+            continue
+        lines.append(f'"{pat}",{iso},"{(note or "добавлено по примеру технолога").replace(chr(34), "")}"')
+        added += 1
+    if lines:
+        os.makedirs(os.path.dirname(MATERIALS_CSV), exist_ok=True)
+        need_header = not existing.strip()
+        with open(MATERIALS_CSV, "a", encoding="utf-8-sig", newline="") as f:
+            if need_header:
+                f.write("pattern,iso,note\n")
+            elif not existing.endswith("\n"):
+                f.write("\n")
+            f.write("\n".join(lines) + "\n")
+        try:
+            from src.materials_mapping import reload_material_rules
+            reload_material_rules()
+        except Exception:
+            pass
+    return added

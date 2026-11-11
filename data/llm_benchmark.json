@@ -1,0 +1,452 @@
+[
+ {
+  "q": "нужно обдирать вязкую нержу по корке с ударом",
+  "iso": "M",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "чем точить нержавейку 12х18н10т начисто",
+  "iso": "M",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "обдирка поковки из 40Х с коркой",
+  "iso": "P",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "подскажи пластину на чистовую по алюминию",
+  "iso": "N",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "титан вт6 получистовая",
+  "iso": "S",
+  "op": "medium",
+  "set": "colloquial"
+ },
+ {
+  "q": "режу чугунную отливку с твёрдой коркой, черновая",
+  "iso": "K",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "инконель 718 чистовое точение",
+  "iso": "S",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "точу закалённую шестерню 58 HRC",
+  "iso": "H",
+  "op": "",
+  "set": "colloquial"
+ },
+ {
+  "q": "снять большой припуск с вала из стали 45",
+  "iso": "P",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "прерывистый рез по сталь 20Х",
+  "iso": "P",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "финишная обработка латуни",
+  "iso": "N",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "нержа AISI 316 подбери пластину для получистового",
+  "iso": "M",
+  "op": "medium",
+  "set": "colloquial"
+ },
+ {
+  "q": "дюраль Д16Т чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "жаропрочка ЭИ437 черновая",
+  "iso": "S",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "серый чугун СЧ25 чистовая обработка",
+  "iso": "K",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "вязкая нержавейка, сильно налипает, чистовая",
+  "iso": "M",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "ст3 обточка по чёрному",
+  "iso": "P",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "бронза БрАЖ9-4 чистовое",
+  "iso": "N",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "чистовой проход по нержавеющей трубе",
+  "iso": "M",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "под удар, неровный припуск, сталь 40ХН",
+  "iso": "P",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "точение пластика капролон",
+  "iso": "N",
+  "op": "",
+  "set": "colloquial"
+ },
+ {
+  "q": "титановый сплав обдирка",
+  "iso": "S",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "20Х13 получистовое точение",
+  "iso": "M",
+  "op": "medium",
+  "set": "colloquial"
+ },
+ {
+  "q": "быстрорез Р6М5 закалённый точить",
+  "iso": "H",
+  "op": "",
+  "set": "colloquial"
+ },
+ {
+  "q": "подбери чтобы нормально резало нержавейку на высоких оборотах",
+  "iso": "M",
+  "op": "",
+  "set": "colloquial"
+ },
+ {
+  "q": "черновая по стали с окалиной",
+  "iso": "P",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "доводка вала из стали 40Х, высокая чистота поверхности",
+  "iso": "P",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "нержавейка AISI 304 чернуха",
+  "iso": "M",
+  "op": "roughing",
+  "set": "colloquial"
+ },
+ {
+  "q": "медная шина, чистовое",
+  "iso": "N",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "хастеллой чистовое точение",
+  "iso": "S",
+  "op": "finishing",
+  "set": "colloquial"
+ },
+ {
+  "q": "stainless 316L, чистовое точение",
+  "iso": "M",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "нержавйка 08х18н10 получистовая",
+  "iso": "M",
+  "op": "semi_finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "SS304 черновая",
+  "iso": "M",
+  "op": "roughing",
+  "set": "holdout"
+ },
+ {
+  "q": "Ti-6Al-4V финишная",
+  "iso": "S",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "Inconel 625 обдирка",
+  "iso": "S",
+  "op": "roughing",
+  "set": "holdout"
+ },
+ {
+  "q": "Hardox 500 чистовое точение",
+  "iso": "H",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "сталь 12ХН3А цементированная 60 HRC финиш",
+  "iso": "H",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "У8А закалка, чистовая",
+  "iso": "H",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "АМг6 чистовая, нужна острая пластина",
+  "iso": "N",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "ЛС59-1 получистовая",
+  "iso": "N",
+  "op": "semi_finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "полиамид ПА6 точение",
+  "iso": "N",
+  "op": "",
+  "set": "holdout"
+ },
+ {
+  "q": "стеклотекстолит чистовое",
+  "iso": "N",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "чугун ВЧ50 черновая с коркой",
+  "iso": "K",
+  "op": "roughing",
+  "set": "holdout"
+ },
+ {
+  "q": "ковкий чугун КЧ35 чистовая",
+  "iso": "K",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "сталь 30ХГСА улучшенная, получистовое",
+  "iso": "P",
+  "op": "semi_finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "Ст45 поковка, большая глубина резания",
+  "iso": "P",
+  "op": "roughing",
+  "set": "holdout"
+ },
+ {
+  "q": "09Г2С труба, универсальная пластина",
+  "iso": "P",
+  "op": "semi_finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "ХН77ТЮР жаропрочный, чистовая",
+  "iso": "S",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "нужна пластина для обработки 40Х13",
+  "iso": "M",
+  "op": "",
+  "set": "holdout"
+ },
+ {
+  "q": "Х12МФ после закалки, финиш",
+  "iso": "H",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "латунь, высокая скорость, чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "точу вал, материал сталь 20, нужна универсальная пластина",
+  "iso": "P",
+  "op": "semi_finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "медь М1 чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "дуплекс 2205 получистовая",
+  "iso": "M",
+  "op": "semi_finishing",
+  "set": "holdout"
+ },
+ {
+  "q": "нержавейка 12Х18Н10Т, снять припуск 5 мм",
+  "iso": "M",
+  "op": "roughing",
+  "set": "holdout"
+ },
+ {
+  "q": "чистовое точение стали 38Х2МЮА азотированной",
+  "iso": "P",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "БрОФ10-1 получистовая",
+  "iso": "N",
+  "op": "semi_finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "нихром Х20Н80 чистовая",
+  "iso": "S",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "АЛ9 силумин чистовое",
+  "iso": "N",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ЦАМ4-1 чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "Х18Н9 нержавейка черновая",
+  "iso": "M",
+  "op": "roughing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ЭИ961 лопатка, чистовое",
+  "iso": "S",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ХН60ВТ черновая",
+  "iso": "S",
+  "op": "roughing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ОТ4 титановый лист чистовая",
+  "iso": "S",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "АК4-1 поршень чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "МЛ5 магниевое литьё чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "Л63 латунь, чистовая",
+  "iso": "N",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "сталь 65Г пружина получистовая",
+  "iso": "P",
+  "op": "semi_finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ВК8 твёрдый сплав чистовая",
+  "iso": "H",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "сталь Гадфильда 110Г13Л черновая",
+  "iso": "H",
+  "op": "roughing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ХВГ 62 HRC финиш",
+  "iso": "H",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "08Х13 клапан, чистовая",
+  "iso": "M",
+  "op": "finishing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ЭП718 диск, черновая",
+  "iso": "S",
+  "op": "roughing",
+  "set": "long_tail"
+ },
+ {
+  "q": "ВЧ40 корпус, черновая с коркой",
+  "iso": "K",
+  "op": "roughing",
+  "set": "long_tail"
+ },
+ {
+  "q": "К-образный проход по стали 45 универсальной пластиной",
+  "iso": "P",
+  "op": "semi_finishing",
+  "set": "long_tail"
+ }
+]

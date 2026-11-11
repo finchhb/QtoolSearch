@@ -1,0 +1,54 @@
+﻿grade,brand,iso_groups,classes,scope,source
+IP4005,INTOOL,P,P05 P10 P20,pmk,справочник компании
+IP4015,INTOOL,P,P10 P20 P25 P30,pmk,справочник компании
+IP4020,INTOOL,P,P10 P20 P25 P30 P35,pmk,справочник компании
+IP4035,INTOOL,P,P30 P35 P40,pmk,справочник компании
+IP4325,INTOOL,P,P20 P25 P30 P35 P40,pmk,справочник компании
+KT1151,Kelite,P,,all,справочник компании
+KT1152,Kelite,P,,all,справочник компании
+KT1153,Kelite,P,,all,справочник компании
+KT1251,Kelite,P,,all,справочник компании
+KT1252,Kelite,P,,all,справочник компании
+KT1253,Kelite,P,,all,справочник компании
+KT1253H,Kelite,P,,all,справочник компании
+KT1311,Kelite,P,,all,справочник компании
+KT1372,Kelite,P,,all,справочник компании
+KT1373,Kelite,P,,all,справочник компании
+KT1455,Kelite,"P,M,S",,all,справочник компании
+KT2252,Kelite,"P,M",,all,справочник компании
+KT3106,Kelite,K,,all,справочник компании
+KT3150,Kelite,K,,all,справочник компании
+KT3150G,Kelite,N,,all,справочник компании
+KT3252,Kelite,K,,all,справочник компании
+KT3262,Kelite,K,,all,справочник компании
+KT3263,Kelite,K,,all,справочник компании
+KT6109,Kelite,H,,all,справочник компании
+KT6259,Kelite,H,,all,справочник компании
+KT8204,Kelite,"P,M,S,K",,all,справочник компании
+KT8206,Kelite,"P,M",,all,справочник компании
+KT8208,Kelite,"P,M,K",,all,справочник компании
+KT8216,Kelite,"P,M,S,K",,all,справочник компании
+KT8284,Kelite,"P,M,S,K",,all,справочник компании
+KT8284S,Kelite,"M,S",,all,справочник компании
+KT8286,Kelite,"P,M",,all,справочник компании
+KT8288,Kelite,"P,M,K",,all,справочник компании
+KT8294,Kelite,"P,M,K",,all,справочник компании
+KT8295,Kelite,"P,M",,all,справочник компании
+KT8296,Kelite,"P,M",,all,справочник компании
+KT8298,Kelite,"P,M,K",,all,справочник компании
+KT8299,Kelite,"P,M,K",,all,справочник компании
+KT8326,Kelite,"P,M",,all,справочник компании
+LF3018,Deskar,K,K10 K15 K20,add_only,справочник компании
+LF3028,Deskar,K,K15 K20 K30 K35,add_only,справочник компании
+LF6011,Deskar,M,M15 M20 M25,add_only,справочник компании
+LF6018,Deskar,M,M25 M30 M35 M40,add_only,справочник компании
+LF9011,Deskar,P,P05 P10,add_only,справочник компании
+LF9018,Deskar,P,P10 P20,add_only,справочник компании
+LF9028,Deskar,P,P25 P30 P35 P40,add_only,справочник компании
+YBG102,ZCC-CT,"P,K",K10 P10,pmk,справочник компании
+YBG152,ZCC-CT,K,K10,pmk,справочник компании
+YBG202,ZCC-CT,"P,M",M20 P20,pmk,справочник компании
+YBG205,ZCC-CT,M,M20,pmk,справочник компании
+YBG252,ZCC-CT,"P,M",M20 P20,pmk,справочник компании
+YBG302,ZCC-CT,"P,M",M30 P30,pmk,справочник компании
+КТ8296,Kelite,"P,M",,all,справочник компании

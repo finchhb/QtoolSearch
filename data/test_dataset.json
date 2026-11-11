@@ -1,0 +1,677 @@
+[
+  {
+    "id": 1,
+    "query": "Подбери пластину для получистового точения стали 40Х",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 2,
+    "query": "Точение нержавейки 12Х18Н10Т с прерывистым резанием",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 3,
+    "query": "Нужна пластина для черновой обработки серого чугуна СЧ20 с коркой",
+    "expected_iso": "K",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 4,
+    "query": "Чистовая обработка алюминия Д16Т на высоких оборотах без налипания",
+    "expected_iso": "N",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 5,
+    "query": "Точение титанового сплава ВТ6, умеренная подача",
+    "expected_iso": "S",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 6,
+    "query": "Обработка закаленной подшипниковой стали ШХ15 твердостью 52 HRC",
+    "expected_iso": "H",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 7,
+    "query": "Пластина для проточки вала из стали 45, получистовой режим",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 8,
+    "query": "Точение фланцев из стали 09Г2С с ударом",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 9,
+    "query": "Чистовое точение пищевой нержавеющей стали AISI 304",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 10,
+    "query": "Черновое точение кислотостойкой нержавейки AISI 316",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 11,
+    "query": "Расточка отверстия в чугунной отливке ВЧ50",
+    "expected_iso": "K",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 12,
+    "query": "Точение ковкого чугуна КЧ30 на универсальном станке",
+    "expected_iso": "K",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 13,
+    "query": "Проточка втулки из латуни ЛС59 на ЧПУ",
+    "expected_iso": "N",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 14,
+    "query": "Обработка алюминиевого сплава АМг6, зеркальная чистота",
+    "expected_iso": "N",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 15,
+    "query": "Точение термообработанной стали 30ХГСА",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 16,
+    "query": "Обработка инконеля Inconel 718",
+    "expected_iso": "S",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 17,
+    "query": "Точение титана ВТ1-0 чистовой резец",
+    "expected_iso": "S",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 18,
+    "query": "Черновая обдирка поковок из стали Ст3",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 19,
+    "query": "Точение дуплексной нержавеющей стали",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 20,
+    "query": "Обработка инструментальной стали ХВГ после закалки 55 HRC",
+    "expected_iso": "H",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 21,
+    "query": "Точение высокопрочного алюминия В95",
+    "expected_iso": "N",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 22,
+    "query": "Получистовое точение трубы 20Х13",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 23,
+    "query": "Точение чугунных тормозных дисков СЧ15",
+    "expected_iso": "K",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 24,
+    "query": "Обработка бронзовой втулки БрАЖ9-4",
+    "expected_iso": "N",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 25,
+    "query": "Обдирка штамповой стали 40ХН",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "material_gost"
+  },
+  {
+    "id": 26,
+    "query": "Пластина CNMG 120408 для стали",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 27,
+    "query": "Пластины WNMG 080408 в сплаве NC3225",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 28,
+    "query": "TNMG 160404 чистовой стружколом",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 29,
+    "query": "DNMG 150608 для контурного точения стали",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 30,
+    "query": "CCMT 09T304 для расточки нержавейки",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 31,
+    "query": "DCMT 11T304 для точной расточки",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 32,
+    "query": "VNMG 160404 для глубоких канавок и профиля",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 33,
+    "query": "SNMG 120412 для тяжелой черновой обдирки",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 34,
+    "query": "Пластина ромб 80 градусов CNMG 120404 с радиусом 0.4 для стали",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 35,
+    "query": "Пластина тригон WNMG 080412 радиус 1.2 черновая",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 36,
+    "query": "Пластина треугольник TNMG 160408 для чугуна",
+    "expected_iso": "K",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 37,
+    "query": "CCMT 060204 для мелких расточных резцов по стали",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 38,
+    "query": "VBMT 160408 контурная пластина для нержавейки",
+    "expected_iso": "M",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 39,
+    "query": "RCMT 1204MO круглая пластина",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 40,
+    "query": "Пластина CNMG 160612 крупный радиус черновая сталь",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 41,
+    "query": "TCMT 16T308 позитивная расточная пластина",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 42,
+    "query": "WNMG 060404 мелкий тригон",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 43,
+    "query": "DNMG 110408 ромб 55 градусов",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 44,
+    "query": "SNMG 190616 тяжелый квадрат для валов",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 45,
+    "query": "Пластина ромб 35 градусов VNMG 160408",
+    "expected_iso": "P",
+    "expected_action": "direct_recommendation",
+    "category": "iso_geometry"
+  },
+  {
+    "id": 46,
+    "query": "Подбери аналог сплава Sandvik GC4325",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 47,
+    "query": "Чем заменить пластины Sandvik GC4315 у Korloy или Deskar",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 48,
+    "query": "Аналог Iscar IC907 для нержавеющей стали",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 49,
+    "query": "Кросс-код для сплава Walter WPP20S",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 50,
+    "query": "Замена пластинам Mitsubishi VP15TF из наличия",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 51,
+    "query": "Аналог Sandvik GC2220 по нержавейке",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 52,
+    "query": "Подбери эквивалент Iscar IC8250 в бренде Korloy",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 53,
+    "query": "Чем заменить сплав Walter WSM20S",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 54,
+    "query": "Аналог пластины Sandvik GC3225 для чугуна",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 55,
+    "query": "Замените сплав Iscar IC8350 для черновой стали с ударом",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 56,
+    "query": "Аналог Sandvik GC1105 для титана",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 57,
+    "query": "Кросс-код сплава Mitsubishi UE6020",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 58,
+    "query": "Аналог Sandvik H10 для точения алюминия у Korloy",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 59,
+    "query": "Подбери замену сплаву Walter WPP10S чистовой",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 60,
+    "query": "Эквивалент пластин Iscar IC908 для тяжелых условий",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 61,
+    "query": "Аналог Sandvik GC4335 для прерывистого точения стали",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 62,
+    "query": "Замена сплава Mitsubishi US735 для нержавейки",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 63,
+    "query": "Аналог Walter WKK20S для высокопрочного чугуна",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 64,
+    "query": "Подбери аналог Iscar IC20 полированный без покрытия",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 65,
+    "query": "Кросс таблица для сплава Walter WSM10S",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 66,
+    "query": "Аналог сплава Sandvik GC3215 чистовой чугун",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 67,
+    "query": "Чем заменить Mitsubishi UE6110 у ZCC-CT",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 68,
+    "query": "Аналог Iscar IC8150 для скоростного точения стали",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 69,
+    "query": "Подбери более дешевый аналог Sandvik GC4325 от бренда Deskar",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 70,
+    "query": "Замена пластины Sandvik GC2025 для черновой нержавейки",
+    "expected_action": "get_analogs",
+    "category": "analogs_cross"
+  },
+  {
+    "id": 71,
+    "query": "Какая державка подходит под пластину CNMG 120408",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 72,
+    "query": "Подбери державку для пластин WNMG 080408 правая 25х25",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 73,
+    "query": "Державка под пластины TNMG 160408",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 74,
+    "query": "Оправка для расточки под пластину CCMT 09T304",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 75,
+    "query": "Какая державка нужна для контурных пластин DNMG 150608",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 76,
+    "query": "Державка под ромб 35 градусов VNMG 160408",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 77,
+    "query": "Подбери пластины для державки PCLNR 2525 M12",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 78,
+    "query": "Какие пластины ставятся в державку PWLNR 2525 M08",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 79,
+    "query": "Пластины для расточной оправки S20S-SCLCR09",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 80,
+    "query": "Державка для пластин SNMG 120408",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 81,
+    "query": "Комплект державка 25х25 и пластины ромб 80 для стали 45",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 82,
+    "query": "Расточной резец и пластины для расточки отверстия от 32 мм в стали 40Х",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 83,
+    "query": "Державка левая под пластину CNMG 120408",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 84,
+    "query": "Пластины для державки PTGNR 2525",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 85,
+    "query": "Оправка для точения пластинами DCMT 11T304",
+    "expected_action": "direct_recommendation",
+    "category": "tooling_compatibility"
+  },
+  {
+    "id": 86,
+    "query": "Посоветуй пластину",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 87,
+    "query": "Какой резец выбрать?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 88,
+    "query": "Нужен инструмент для токарного станка",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 89,
+    "query": "Подбери хорошую пластинку",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 90,
+    "query": "Пластина для точения",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 91,
+    "query": "Что посоветуешь для токарки?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 92,
+    "query": "Нужна пластина ромб",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 93,
+    "query": "Подберите инструмент для обточки детали",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 94,
+    "query": "Хочу купить резцы",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 95,
+    "query": "Какая пластина самая стойкая?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 96,
+    "query": "Посоветуйте твердый сплав",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 97,
+    "query": "Нужны сменные пластины для цеха",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 98,
+    "query": "Что взять для проточки цилиндра?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 99,
+    "query": "Какая геометрия лучше всего?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 100,
+    "query": "Подберите инструмент для токарных работ",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 101,
+    "query": "Что поставить в станок с ЧПУ?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 102,
+    "query": "Нужен резец для металлообработки",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 103,
+    "query": "Пластина для снятия припуска",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 104,
+    "query": "Посоветуй оснастку и резец",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  },
+  {
+    "id": 105,
+    "query": "Какую пластину взять начинающему токарю?",
+    "expected_action": "clarification_branch",
+    "category": "ambiguous_clarification"
+  }
+]

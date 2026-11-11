@@ -1,0 +1,6 @@
+﻿set,query,exp_iso,parser_iso,llm_iso,exp_op,parser_op,llm_op,sec,error
+colloquial,нужно обдирать вязкую нержу по корке с ударом,M,M,,roughing,roughing,,90.73,qwen2.5:3b: timed out
+colloquial,чем точить нержавейку 12х18н10т начисто,M,M,,finishing,finishing,,90.24,qwen2.5:3b: timed out
+colloquial,обдирка поковки из 40Х с коркой,P,P,,roughing,roughing,roughing,59.88,
+colloquial,подскажи пластину на чистовую по алюминию,N,N,,finishing,finishing,,34.12,
+colloquial,титан вт6 получистовая,S,S,,semi_finishing,semi_finishing,,31.66,
