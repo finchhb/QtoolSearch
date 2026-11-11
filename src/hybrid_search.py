@@ -283,7 +283,7 @@ class HybridSearchEngine:
         matches.sort(key=lambda m: (m["score"], m["item"].get("stock", 0)), reverse=True)
         matches = self._merge_duplicates(matches)
 
-        selected_matches = self._select_diverse_top(matches, initial_filters, limit)
+        selected_matches = self._select_diverse_top(matches, initial_filters, limit, active_source=active_source)
         top_items = [self._clean_item_for_output(m["item"], active_source=active_source) for m in selected_matches]
 
         missing_params, follow_up_questions = self.build_follow_up_questions(initial_filters, matches)
@@ -302,14 +302,13 @@ class HybridSearchEngine:
         }
 
     @staticmethod
-    def _merge_duplicates(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Одна и та же пластина приходит строками из qtool.ru, Rinscom.com и с «другого склада» (разные цена и остаток).
-        Склеиваем по нормализованному артикулу: в выдаче одна карточка, остальные предложения — в item["_offers"]."""
-        def key(it: Dict[str, Any]) -> str:
+    def _merge_duplicates(matches):
+        """PATCH_SOURCES_V2: при склейке артикула ссылки и признак «в обоих» берём со всех строк."""
+        def key(it):
             return re.sub(r"[^A-Z0-9А-Я]", "", str(it.get("sku") or "").upper()) or str(id(it))
 
-        groups: Dict[str, Dict[str, Any]] = {}
-        order: List[str] = []
+        groups = {}
+        order = []
         for m in matches:
             k = key(m["item"])
             if k not in groups:
@@ -317,37 +316,106 @@ class HybridSearchEngine:
                 order.append(k)
             else:
                 groups[k]["rows"].append(m["item"])
-        merged: List[Dict[str, Any]] = []
+
+        merged = []
         for k in order:
             g = groups[k]
             if len(g["rows"]) == 1:
                 merged.append(g["match"])
                 continue
-            item = dict(g["rows"][0])
-            item["_offers"] = [{"store": r.get("source_site", ""), "stock": r.get("stock", 0), "price": r.get("price", 0.0),
-                                "currency": r.get("currency", "RUB"), "por": bool(r.get("_por")),
-                                "url": (r.get("qtool_url") if r.get("source_site") == "qtool.ru" else r.get("rinscom_url")) or r.get("qtool_url") or r.get("rinscom_url") or ""}
-                               for r in g["rows"]]
-            item["stock"] = sum(int(r.get("stock", 0) or 0) for r in g["rows"])  # суммарный остаток по всем складам и магазинам
+            rows = g["rows"]
+            item = dict(rows[0])
+            r_url = next((r.get("rinscom_url") for r in rows if r.get("rinscom_url")), "")
+            q_url = next((r.get("qtool_url") for r in rows if r.get("qtool_url")), "")
+            if r_url:
+                item["rinscom_url"] = r_url
+            if q_url:
+                item["qtool_url"] = q_url
+            stores = {r.get("source_site", "") for r in rows if r.get("source_site")}
+            if (r_url and q_url) or len(stores) > 1:
+                item["in_both_stores"] = "1"
+            item["_offers"] = [
+                {"store": r.get("source_site", ""), "stock": r.get("stock", 0),
+                 "price": r.get("price", 0.0), "currency": r.get("currency", "RUB"),
+                 "por": bool(r.get("_por")),
+                 "url": (r.get("qtool_url") if r.get("source_site") == "qtool.ru" else r.get("rinscom_url"))
+                        or r.get("qtool_url") or r.get("rinscom_url") or ""}
+                for r in rows
+            ]
+            item["stock"] = sum(int(r.get("stock", 0) or 0) for r in rows)
+            priced = [r for r in rows if (r.get("price") or 0) > 0 and not r.get("_por")]
+            if priced:
+                best = min(priced, key=lambda r: r.get("price", 0.0))
+                item["price"] = best.get("price", 0.0)
+                item["currency"] = best.get("currency", "RUB")
+                item["_por"] = False
             m2 = dict(g["match"])
             m2["item"] = item
             merged.append(m2)
         return merged
 
-    def _select_diverse_top(self, matches: List[Dict[str, Any]], initial_filters: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+    def _select_diverse_top(self, matches, initial_filters, limit, active_source="rinscom"):
+        """PATCH_SOURCES_V2: в режиме both каждый магазин, у которого есть совпадения, попадает в выдачу."""
+        def stores_of(m):
+            it = m["item"]
+            s = set()
+            ss = (it.get("source_site") or "").lower()
+            if ss:
+                s.add("qtool" if "qtool" in ss else "rinscom")
+            for o in (it.get("_offers") or []):
+                st = (o.get("store") or "").lower()
+                if st:
+                    s.add("qtool" if "qtool" in st else "rinscom")
+            if it.get("rinscom_url"):
+                s.add("rinscom")
+            if it.get("qtool_url"):
+                s.add("qtool")
+            return s
+
+        def balance(picked):
+            picked = list(picked)
+            if active_source != "both" or not picked or limit <= 0:
+                return picked[:limit]
+            ids = {id(x) for x in picked}
+            have = set()
+            for m in picked:
+                have |= stores_of(m)
+            for store in ("rinscom", "qtool"):
+                if store in have:
+                    continue
+                cand = next((m for m in matches
+                             if store in stores_of(m) and id(m) not in ids), None)
+                if cand is None:
+                    continue
+                if len(picked) < limit:
+                    picked.append(cand)
+                else:
+                    idx = None
+                    for j in range(len(picked) - 1, -1, -1):
+                        rest = set()
+                        for t, mm in enumerate(picked):
+                            if t != j:
+                                rest |= stores_of(mm)
+                        if stores_of(picked[j]) <= rest:
+                            idx = j
+                            break
+                    if idx is None:
+                        idx = len(picked) - 1
+                    ids.discard(id(picked[idx]))
+                    picked[idx] = cand
+                ids.add(id(cand))
+                have |= stores_of(cand)
+            return picked[:limit]
+
         if not matches or len(matches) <= limit:
-            return matches[:limit]
+            return balance(matches[:limit])
         if initial_filters.get("clearance_angle") or initial_filters.get("insert_iso_code"):
-            return matches[:limit]
-
-        by_ca: Dict[str, List[Dict[str, Any]]] = {}
+            return balance(matches[:limit])
+        by_ca = {}
         for m in matches:
-            ca = m["item"].get("_ca_up", "")
-            by_ca.setdefault(ca, []).append(m)
-
+            by_ca.setdefault(m["item"].get("_ca_up", ""), []).append(m)
         if len(by_ca) <= 1:
-            return matches[:limit]
-
+            return balance(matches[:limit])
         picked = []
         picked_ids = set()
         for ca_key in ("N", "C", "P", "B"):
@@ -357,7 +425,6 @@ class HybridSearchEngine:
                     if cid not in picked_ids and len(picked) < limit:
                         picked.append(cand)
                         picked_ids.add(cid)
-
         for m in matches:
             if len(picked) >= limit:
                 break
@@ -365,8 +432,7 @@ class HybridSearchEngine:
             if cid not in picked_ids:
                 picked.append(m)
                 picked_ids.add(cid)
-
-        return picked[:limit]
+        return balance(picked)
 
     def build_follow_up_questions(self, initial_filters: Dict[str, Any], matches: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
         cat = initial_filters.get("category") or "turning_insert"
@@ -437,39 +503,44 @@ class HybridSearchEngine:
         return missing_params, questions
 
     @staticmethod
-    def format_store_links(item: Dict[str, Any], active_source: str = "rinscom") -> str:
-        """
-        Формирует Markdown-ссылки на страницы интернет-магазинов:
-        - В зависимости от выбранного источника (Rinscom.com или qtool.ru).
-        - Если пластина есть И ТАМ, И ТАМ (обе ссылки заполнены) — возвращает ДВЕ ссылки!
-        """
+    def format_store_links(item, active_source="rinscom"):
+        """PATCH_SOURCES_V2: ссылки по всем предложениям, оба магазина не теряются."""
+        links = []
+        seen = set()
+
+        def add(store, url, primary=False):
+            url = (url or "").strip()
+            if not url or url in seen:
+                return
+            seen.add(url)
+            is_q = "qtool" in (store or "")
+            label = ("Открыть на qtool.ru" if primary and is_q else
+                     "Открыть на Rinscom.com" if primary else
+                     "Также есть на qtool.ru" if is_q else "Также есть на Rinscom.com")
+            links.append(f"[{label}]({url})")
+
+        offers = item.get("_offers") or []
+
+        def rank(o):
+            s = (o.get("store") or "").lower()
+            if active_source == "qtool":
+                return 0 if "qtool" in s else 1
+            if active_source == "rinscom":
+                return 0 if "rinscom" in s else 1
+            return 0
+
+        first = True
+        for o in sorted(offers, key=rank):
+            add(o.get("store", ""), o.get("url", ""), primary=first)
+            first = False
         r_url = (item.get("rinscom_url") or "").strip()
         q_url = (item.get("qtool_url") or "").strip()
-        links = []
-
         if active_source == "qtool":
-            if q_url:
-                links.append(f"[Открыть на qtool.ru]({q_url})")
-            if r_url:
-                links.append(f"[Также есть на Rinscom.com]({r_url})")
-        elif active_source == "rinscom":
-            if r_url:
-                links.append(f"[Открыть на Rinscom.com]({r_url})")
-            if q_url:
-                links.append(f"[Также есть на qtool.ru]({q_url})")
+            add("qtool.ru", q_url, primary=first); first = False
+            add("rinscom.com", r_url)
         else:
-            # Режим 'both' (оба источника)
-            if item.get("source_site") == "qtool.ru":
-                if q_url:
-                    links.append(f"[Открыть на qtool.ru]({q_url})")
-                if r_url:
-                    links.append(f"[Открыть на Rinscom.com]({r_url})")
-            else:
-                if r_url:
-                    links.append(f"[Открыть на Rinscom.com]({r_url})")
-                if q_url:
-                    links.append(f"[Открыть на qtool.ru]({q_url})")
-
+            add("rinscom.com", r_url, primary=first); first = False
+            add("qtool.ru", q_url)
         return " | ".join(links)
 
     def _clean_item_for_output(self, item: Dict[str, Any], active_source: str = "rinscom") -> Dict[str, Any]:
