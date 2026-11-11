@@ -935,3 +935,7 @@ if __name__ == "__main__":
         print(msg)
     if os.path.exists(p_in):
         build_catalog(p_in, p_out)
+
+
+# Алиас для обратной совместимости с src/engine.py
+build_qtool_catalog = build_catalog

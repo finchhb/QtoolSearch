@@ -228,91 +228,25 @@ def detect_application_type(text: str) -> str:
 
 
 def detect_insert_shape(text: str) -> str:
-    """Извлечение формы пластины (C, W, T, D, V, S, R)"""
-    upper = text.upper()
-    m = re.search(r'\b([CWTDSVR])[NCTBPEFG][MGU][A-Z0-9]*\b', upper)
-    if m:
-        return m.group(1)
-
-    lower = text.lower()
-    if "ромб 80" in lower or "ромбическая 80" in lower or "cnmg" in lower or "ccmt" in lower or "ccgt" in lower:
-        return "C"
-    if "тригон" in lower or "wnmg" in lower or "ломаный треугольник" in lower:
-        return "W"
-    if "треугольн" in lower or "tnmg" in lower or "tcmt" in lower or "tcgt" in lower or "tpkr" in lower or "tpmr" in lower:
-        return "T"
-    if "ромб 55" in lower or "ромбическая 55" in lower or "dnmg" in lower or "dcmt" in lower or "dcgt" in lower:
-        return "D"
-    if "ромб 35" in lower or "ромбическая 35" in lower or "vnmg" in lower or "vbmt" in lower or "vcgt" in lower:
-        return "V"
-    if "квадрат" in lower or "snmg" in lower or "scmt" in lower:
-        return "S"
-    if "кругл" in lower or "rcmt" in lower or "rpmt" in lower:
-        return "R"
-    return ""
+    """Форма пластины: код ISO или русские слова (ромб/треугольник/квадрат/тригон/...)."""
+    from src import iso1832
+    return iso1832.detect_shape(text)[0]
 
 
 def detect_clearance_angle(text: str) -> str:
-    """
-    Извлекает задний угол пластины (2-я буква кода ISO: N=0°, C=7°, P=11°, B=5°, D=15°, E=20°),
-    ТОЛЬКО если он явно указан в тексте запроса или в коде пластины ISO (например, TNMG -> N, TCMT -> C).
-    Если пользователь написал просто "треугольная пластина по чугуну размер 16", возвращает "".
-    """
-    upper = text.upper()
-    # 1. Если указан 4-буквенный ISO-код пластины (например, TNMG, TCMT, CNMG, CCMT, VBMT)
-    m_iso = re.search(r'\b[CWTDSVR]([NCTBPEFG])[MGU][A-Z]\b', upper)
-    if m_iso:
-        return m_iso.group(1)
-
-    lower = text.lower()
-    # 2. Явное текстовое указание заднего угла или негативной/позитивной геометрии
-    if any(p in lower for p in ["задний угол 0", "угол 0", "0 град", "0°", "негативн", "двухсторонн", "двусторонн", "без заднего угла"]):
-        return "N"
-    if any(p in lower for p in ["задний угол 7", "угол 7", "7 град", "7°", "позитивн", "односторонн"]):
-        return "C"
-    if any(p in lower for p in ["задний угол 11", "угол 11", "11 град", "11°"]):
-        return "P"
-    if any(p in lower for p in ["задний угол 5", "угол 5", "5 град", "5°"]):
-        return "B"
-    if any(p in lower for p in ["задний угол 15", "угол 15", "15 град", "15°"]):
-        return "D"
-    if any(p in lower for p in ["задний угол 20", "угол 20", "20 град", "20°"]):
-        return "E"
-    return ""
+    """Задний угол: из кода ISO или явного указания (с границами чисел, без ложных '0°' внутри '80°')."""
+    from src import iso1832
+    return iso1832.detect_clearance(text)
 
 
 def detect_size_code(text: str) -> str:
-    """Извлекает двузначный код размера пластины, если он явно указан в запросе (например 'размер 16' или 'TNMG160408')."""
-    upper = text.upper()
-    m_code = re.search(r'\b[CWTDSVR][NCTBPEFG][MGU][A-Z]\s*(\d{2})\d{2,4}\b', upper)
-    if m_code:
-        return m_code.group(1)
-
-    lower = text.lower()
-    m_sz = re.search(r'(?:размер[а-я]*|габарит[а-я]*|кромк[а-я]*)\s*[:=-]?\s*(\d{1,2})\b', lower)
-    if m_sz:
-        return f"{int(m_sz.group(1)):02d}"
-    m_sz2 = re.search(r'\b(\d{1,2})\s*(?:размер|габарит|мм\s+кромк)', lower)
-    if m_sz2:
-        return f"{int(m_sz2.group(1)):02d}"
-    return ""
+    """Код размера: из кода ISO, 'размер 16', 'треугольник 16', '1204', 'N мм' (длина кромки по ГОСТ)."""
+    from src import iso1832
+    shape = iso1832.detect_shape(text)[0]
+    return iso1832.detect_size(text, shape).get("size_code") or ""
 
 
 def detect_corner_radius(text: str) -> Optional[float]:
-    """Извлечение радиуса при вершине (R0.2, R0.4, R0.8, R1.2, R1.6)"""
-    lower = text.lower()
-    m = re.search(r'(?:r|радиус[а-я]*|r=|r\s*)(\d+[.,]\d+)', lower)
-    if m:
-        val_str = m.group(1).replace(',', '.')
-        try:
-            return float(val_str)
-        except Exception:
-            pass
-    m_code = re.search(r'\b[A-Z]{4}\s*\d{2}[A-Z0-9]{2}(\d{2})\b', text.upper())
-    if m_code:
-        r_code = m_code.group(1)
-        try:
-            return int(r_code) / 10.0
-        except Exception:
-            pass
-    return None
+    """Радиус вершины: из кода ISO, 'радиус 0,8', 'r0.8', 'R08'."""
+    from src import iso1832
+    return iso1832.detect_radius(text)

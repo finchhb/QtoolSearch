@@ -101,7 +101,11 @@ class LLMClient:
         return ", ".join(self.models)
 
     def is_configured(self) -> bool:
-        return bool(self.api_key and self.models and self.base_url)
+        if not (self.api_key and self.models and self.base_url):
+            return False
+        if "ваш_ключ" in self.api_key.lower() or "your-" in self.base_url:
+            return False  # заглушка из data/llm_config.json — не считаем настроенным
+        return True
 
     def save_config(self, api_key: str = "", base_url: str = "", models: str = "") -> None:
         if self.public_mode:

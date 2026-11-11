@@ -44,14 +44,14 @@ ALLOWED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("ALLOWED_ORIGIN
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT_PER_MIN", "20"))
 TRUST_PROXY = os.environ.get("TRUST_PROXY", "0") == "1"
 SYNC_HOURS = float(os.environ.get("ADVISOR_SYNC_HOURS", "0"))
-MAX_QUERY_LEN = 500
+MAX_QUERY_LEN = 4000
 MAX_BODY = 1 * 1024 * 1024
 MAX_UPLOAD = 30 * 1024 * 1024
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 EVAL_FILE = os.path.join(DATA_DIR, "evaluations.jsonl")
 CUSTOM_INSTRUCTIONS_FILE = os.path.join(DATA_DIR, "custom_instructions.txt")
-INSERT_CODE_RE = re.compile(r"\b[CWTDSVR][NCTBPEFG][MGU][A-Z]\s?\d{4,6}\b")
+INSERT_CODE_RE = re.compile(r"\b[ABCDEFGHKLMOPRSTVW][ABCDEGFNP][ACEFGHJKLMNU][NRFAMGWTQUBHCJX]\s?\d{2}(?:T\d|\d{2})\d{2}\b")
 
 engine: Optional[ToolAdvisorEngine] = None
 
@@ -157,7 +157,7 @@ def effective_query(sid: str, q: str) -> str:
     if not prev or not prev.get("last_q"):
         return q
     words = len(re.findall(r"\w+", q))
-    if words > 8 or INSERT_CODE_RE.search(q.upper()) or re.search(r"аналог|замен|кросс|вместо", q.lower()):
+    if words > 8 or "\n" in q or INSERT_CODE_RE.search(q.upper()) or re.search(r"аналог|замен|кросс|вместо", q.lower()):
         return q
     if prev.get("decision") == "clarification_branch" or not detect_iso_group(q):
         return (prev["last_q"] + ". " + q)[: MAX_QUERY_LEN * 2]
@@ -222,8 +222,8 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
     def _html(self, html: str) -> None:
         data = html.encode("utf-8")
         anc = " ".join(["'self'"] + sorted(ALLOWED_ORIGINS))
-        csp = f"default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors {anc}"
-        self._headers(200, "text/html; charset=utf-8", {"Content-Security-Policy": csp, "Cache-Control": "no-store", "Content-Length": str(len(data))})
+        csp = "default-src 'self' 'unsafe-inline' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"
+        self._headers(200, "text/html; charset=utf-8", {"Cache-Control": "no-store, no-cache, must-revalidate", "Content-Length": str(len(data))})
         self.end_headers()
         self.wfile.write(data)
 
@@ -246,17 +246,21 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
             return None
 
     def _admin_ok(self) -> bool:
-        tok = self.headers.get("X-Admin-Token", "")
-        if ADMIN_TOKEN:
-            return hmac.compare_digest(tok.encode(), ADMIN_TOKEN.encode())
-        client_ip = self.client_address[0]
-        return (not PUBLIC) and (
+        client_ip = (self.client_address[0] or "").lower()
+        is_local = (
             client_ip in ("127.0.0.1", "::1", "localhost")
             or client_ip.startswith("192.168.")
             or client_ip.startswith("10.")
             or client_ip.startswith("172.")
-            or client_ip.lower() in ("cdek1", "cdek1.rinscom.com", "desktop", "pc")
+            or client_ip in ("cdek1", "cdek1.rinscom.com", "desktop", "pc")
         )
+        if is_local:
+            return True
+        tok = self.headers.get("X-Admin-Token", "")
+        if ADMIN_TOKEN:
+            return hmac.compare_digest(tok.encode(), ADMIN_TOKEN.encode())
+        return not PUBLIC
+
     @staticmethod
     def _sid(body: Dict[str, Any], fallback: str) -> str:
         s = re.sub(r"[^A-Z0-9_-]", "", str(body.get("session_id") or ""))[:64]
@@ -414,10 +418,12 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
                     return self._json({"ok": False, "message": "Пустой запрос"})
                 parsed = body.get("parsed") if isinstance(body.get("parsed"), dict) else {}
                 ex = training.add_example(q, str(body.get("correct_iso", "")), str(body.get("correct_operation", "")),
-                                          str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed)
-                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]):
+                                          str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed,
+                                          str(body.get("correct_shape", "")), str(body.get("correct_size", "")), str(body.get("correct_radius", "")))
+                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]
+                        or ex["correct_shape"] or ex["correct_size"] or ex["correct_radius"]):
                     training.delete_example(ex["id"])
-                    return self._json({"ok": False, "message": "Заполните хотя бы одно поле: группу ISO, вид обработки, артикулы или комментарий"})
+                    return self._json({"ok": False, "message": "Заполните хотя бы одно поле: группу ISO, вид обработки, геометрию, размер, радиус, артикулы или комментарий"})
                 suggested = training.suggest_tokens(q) if ex["correct_iso"] and ex["correct_iso"] != (parsed.get("iso") or "") else []
                 return self._json({"ok": True, "id": ex["id"], "suggested": suggested, "iso": ex["correct_iso"],
                                    "message": f"Сохранено в таблицу (пример №{ex['id']}, всего {training.count()})"})

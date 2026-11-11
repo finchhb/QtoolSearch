@@ -21,7 +21,7 @@ class ClarificationAdvisor:
         radius = detect_corner_radius(query)
 
         # Проверка наличия конкретного артикула ISO (например, CNMG, WNMG, CCMT)
-        has_iso_code = bool(re.search(r'\b[CWTDSVR][NCTB][MG]\b', query.upper())) or bool(shape)
+        has_iso_code = bool(re.search(r'\b[ABCDEFGHKLMOPRSTVW][ABCDEGFNP][ACEFGHJKLMNU][NRFAMGWTQUBHCJX](\s?\d|\b)', query.upper())) or bool(shape)
         
         # Проверка запроса на аналог / замену
         is_analog = any(w in query.lower() for w in ["аналог", "замен", "кросс", "вместо", "эквивалент"])

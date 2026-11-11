@@ -35,6 +35,7 @@ from src import training
 from src.llm_client import LLMClient
 from src.reviewer import Reviewer
 from src.hybrid_search import HybridSearchEngine
+from src import iso1832
 from src.materials_mapping import detect_material_note, find_unknown_marks
 from src.materials_mapping import (
     BRAND_SYNONYMS,
@@ -117,8 +118,7 @@ class ToolAdvisorEngine:
         if os.path.exists("price_sale.xlsx"):
             self.price_xlsx_path = "price_sale.xlsx"
         if not os.path.exists(self.catalog_path) and os.path.exists(self.qtool_xlsx_path):
-            from build_catalog import build_qtool_catalog
-            build_qtool_catalog(self.qtool_xlsx_path, self.catalog_path, self.grades_path)
+            build_catalog(self.qtool_xlsx_path, self.catalog_path, self.grades_path)
 
         self.search_engine = HybridSearchEngine(self.catalog_path, cross_codes_path, grades_path)
         self.analogs_engine = AnalogsEngine(cross_codes_path, grades_path)
@@ -351,6 +351,8 @@ class ToolAdvisorEngine:
 
         req_limit = min(int(args.get("limit") or 5), 6)
 
+        req_grade = args.get("grade")
+        req_cb = args.get("chipbreaker")
         res = self.search_engine.search(
             category=category,
             iso_group=iso_group,
@@ -376,6 +378,59 @@ class ToolAdvisorEngine:
             active_source=self.active_source,
         )
         res["source"] = self.price_source_label
+
+        # Если в запросе был указан сплав (например, IS7015) или стружколом, прикрепляем кросс-таблицу аналогов
+        if req_grade or req_cb:
+            cross_list = self.analogs_engine.find_grade_cross(req_grade or "", fallback_iso=iso_group, fallback_op=operation)
+            cb_analogs = self.analogs_engine.get_chipbreaker_analogs(req_cb, iso_group=iso_group, operation=operation)
+            if cross_list:
+                res["analog_cross_info"] = cross_list[0]
+            if cb_analogs:
+                res["chipbreaker_analogs"] = cb_analogs
+
+            # Проверяем, есть ли в выдаче точный запрошенный сплав; если нет — приоритизируем аналоги из кросс-таблицы!
+            prods_now = res.get("products") or []
+            has_exact_grade = bool(req_grade and any((p.get("grade") or "").upper() == req_grade.upper() for p in prods_now))
+            if req_grade and not has_exact_grade and cross_list:
+                c_info = cross_list[0]
+                analog_grade_tokens = set()
+                for g_str in c_info.get("analogs", {}).values():
+                    for g_tok in re.split(r"[,/]+", g_str):
+                        g_clean = re.sub(r"\(.*?\)", "", g_tok).strip().upper()
+                        if g_clean:
+                            analog_grade_tokens.add(g_clean)
+                # Ищем в каталоге позиции той же геометрии и группы ISO с марками-аналогами из таблицы
+                analog_matches = []
+                seen_skus = set()
+                for ag in sorted(analog_grade_tokens):
+                    sub = self.search_engine.search(
+                        category=category,
+                        iso_group=iso_group or c_info.get("iso_group"),
+                        insert_iso_code=args.get("insert_iso_code"),
+                        insert_shape=args.get("insert_shape"),
+                        clearance_angle=clearance_angle,
+                        size_code=args.get("size_code"),
+                        corner_radius_mm=args.get("corner_radius_mm"),
+                        grade=ag,
+                        in_stock_only=args.get("in_stock_only", True),
+                        limit=3,
+                        active_source=self.active_source,
+                    )
+                    for sp in sub.get("products") or []:
+                        if sp["sku"] not in seen_skus:
+                            seen_skus.add(sp["sku"])
+                            analog_matches.append(sp)
+                for p in prods_now:
+                    if p["sku"] not in seen_skus:
+                        seen_skus.add(p["sku"])
+                        analog_matches.append(p)
+                if analog_matches:
+                    res["products"] = analog_matches[:req_limit]
+                    res["relaxation_applied"] = True
+                    res["relaxation_notes"] = (
+                        f"Точного сплава `{req_grade}` нет в остатках — подобраны прямые аналоги для группы **ISO {iso_group or c_info.get('iso_group')}** "
+                        f"({c_info.get('operation_desc', '')})"
+                    )
 
         # Сразу добавляем информацию о подходящих державках в ответ search_products, чтобы не нужен был 2-й вызов функции
         prods = res.get("products") or []
@@ -559,8 +614,33 @@ class ToolAdvisorEngine:
     # ------------------------------------------------------------------------------------------
     # Основной вход: внутренний парсер отвечает всегда; LLM лишь проверяет параметры (src/reviewer.py)
     # ------------------------------------------------------------------------------------------
+    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool) -> Dict[str, Any]:
+        """Несколько позиций в одном запросе: каждая ищется отдельно, ответ объединяется."""
+        texts, all_prods, steps, first = [], [], [], None
+        seen = set()
+        for i, pos in enumerate(positions, 1):
+            r = self.process_query_autonomous(pos["text"], allow_review=allow_review)
+            if first is None:
+                first = r
+            qty = f" — {pos['qty']} шт" if pos.get("qty") else ""
+            texts.append(f"## Позиция {i}: {pos['text']}{qty}\n\n{r.get('response_text', '')}")
+            for pr in (r.get("tool_result") or {}).get("products") or []:
+                if pr.get("sku") not in seen:
+                    seen.add(pr.get("sku"))
+                    all_prods.append(pr)
+            steps.extend(r.get("tool_steps") or [])
+        merged = dict(first)
+        merged.update({"decision": "multi_position", "response_text": "\n\n---\n\n".join(texts),
+                       "tool_result": {**(first.get("tool_result") or {}), "products": all_prods[:30]},
+                       "tool_steps": steps, "positions": positions})
+        return merged
+
     def process_query(self, user_query: str, chat_history: Optional[List[Dict[str, Any]]] = None, force_local: bool = False) -> Dict[str, Any]:
-        res = self.process_query_autonomous(user_query, allow_review=not force_local)
+        allow_review = (not force_local) and os.environ.get("ADVISOR_DISABLE_LLM", "1") != "1"
+        positions = iso1832.split_positions(user_query)
+        if len(positions) > 1:
+            return self._process_multi(positions, allow_review)
+        res = self.process_query_autonomous(user_query, allow_review=allow_review)
         res["provider"] = "builtin"
         res["model"] = "parser-ISO1832"
         res.setdefault("llm_status", "not_needed")
@@ -575,7 +655,17 @@ class ToolAdvisorEngine:
             category = "groove_insert"
 
         detected_op = detect_explicit_operation(user_query)
-        iso_code_m = re.search(r"(?<![A-Z0-9])([CWTDSVR][NCTBPEFG][MGU][A-Z])\s?([0-9][0-9A-Z]{0,5})?(?![A-Z])", user_query.upper())
+        det = iso1832.detect_all(user_query)
+
+        # Извлекаем сплав, стружколом и его ISO-группу через AnalogsEngine
+        ext = self.analogs_engine.extract_grade_and_sku(user_query)
+        detected_grade = ext.get("grade") or None
+        detected_cb = ext.get("chipbreaker") or None
+        iso_from_grade = ext.get("iso_group") or None
+        op_from_grade = ext.get("operation") or None
+
+        iso_final = detect_iso_group(user_query) or iso_from_grade or None
+        op_final = detected_op if (category == "turning_insert" and detected_op) else (op_from_grade if category == "turning_insert" else None)
 
         detected_brand = None
         for syn, b_norm in BRAND_SYNONYMS.items():
@@ -591,17 +681,19 @@ class ToolAdvisorEngine:
 
         return {
             "category": category,
-            "iso_group": detect_iso_group(user_query) or None,
-            "operation": detected_op if (category == "turning_insert" and detected_op) else None,
-            "insert_iso_code": ((iso_code_m.group(1) + (iso_code_m.group(2) or "")).replace(" ", "")) if iso_code_m else None,
-            "insert_shape": detect_insert_shape(user_query) or None,
-            "clearance_angle": detect_clearance_angle(user_query) or None,
-            "size_code": detect_size_code(user_query) or None,
-            "corner_radius_mm": detect_corner_radius(user_query),
+            "iso_group": iso_final,
+            "operation": op_final,
+            "insert_iso_code": det["code"] or None,
+            "insert_shape": det["shape"] or None,
+            "clearance_angle": det["clearance"] or None,
+            "size_code": det["size_code"] or None,
+            "corner_radius_mm": det["radius"],
+            "chipbreaker": detected_cb,
+            "grade": detected_grade,
             "brand": detected_brand,
             "text_query": user_query,
             "in_stock_only": True,
-            "limit": 5,
+            "limit": 6,
         }
 
     _unrec_lock = threading.Lock()
@@ -702,6 +794,15 @@ class ToolAdvisorEngine:
                 search_args["iso_group"] = example["correct_iso"]
             if example["correct_operation"]:
                 search_args["operation"] = example["correct_operation"]
+            if example.get("correct_shape"):
+                search_args["insert_shape"] = example["correct_shape"]
+            if example.get("correct_size"):
+                search_args["size_code"] = example["correct_size"]
+            if example.get("correct_radius"):
+                try:
+                    search_args["corner_radius_mm"] = float(example["correct_radius"])
+                except ValueError:
+                    pass
 
         # 1. Запрос слишком размытый: парсер просит уточнения (LLM может распознать материал или написать точные вопросы)
         if completeness["recommended_action"] == "ask_clarification" and not (example and (example["correct_iso"] or example["correct_skus"])):
@@ -751,6 +852,8 @@ class ToolAdvisorEngine:
         pinned_note = self._pin_example_products(tool_res, example)
         tool_res["iso_requested"] = search_args.get("iso_group") or ""
         text = self._format_recommendation_response(user_query, tool_res, holder_res)
+        if tool_res.get("did_you_mean") and not tool_res.get("products"):
+            text += "\n\n> 💡 Возможно, вы имели в виду: " + ", ".join(f"`{c}`" for c in tool_res["did_you_mean"][:5])
         pre_notes = []
         if example:
             bits = [x for x in (f"ISO {example['correct_iso']}" if example["correct_iso"] else "",
@@ -787,6 +890,7 @@ class ToolAdvisorEngine:
         """Как парсер понял запрос — для формы обучения (показывается только при локальном запуске/в админке)."""
         return {"iso": parsed_orig.get("iso", ""), "operation": parsed_orig.get("operation", ""),
                 "shape": args.get("insert_shape") or "", "size": args.get("size_code") or "", "code": args.get("insert_iso_code") or "",
+                "radius": args.get("corner_radius_mm"),
                 "brand": args.get("brand") or "", "category": args.get("category") or "",
                 "top_skus": [p.get("sku", "") for p in (tool_res.get("products") or [])[:5]]}
 
@@ -878,6 +982,19 @@ class ToolAdvisorEngine:
 
         if search_res.get("relaxation_applied"):
             lines.append(f"> ℹ️ *Примечание фильтрации: {search_res.get('relaxation_notes')}*\n")
+
+        cross_info = search_res.get("analog_cross_info")
+        if cross_info:
+            src_g = cross_info.get("source_grade") or ""
+            lines.append(f"🔄 **Распознан сплав `{src_g}` ({cross_info.get('detected_brand', '')}) → Группа ISO `{cross_info.get('iso_group')}` ({cross_info.get('iso_range')})**")
+            lines.append(f"* **Назначение:** {cross_info.get('operation_desc', '')}")
+            eq_parts = [f"**{b}**: `{g}`" for b, g in list(cross_info.get("analogs", {}).items())[:8]]
+            if eq_parts:
+                lines.append("* **Аналоги сплава по кросс-таблице:** " + " | ".join(eq_parts))
+            cb_list = search_res.get("chipbreaker_analogs") or cross_info.get("chipbreakers") or []
+            if cb_list:
+                lines.append("* **Рекомендуемые стружколомы-аналоги:** `" + "`, `".join(cb_list[:10]) + "`")
+            lines.append("")
 
         for idx, p in enumerate(products[:5], 1):
             c1c = f" | **Код/ID:** `{p['code_1c']}`" if p.get("code_1c") else ""

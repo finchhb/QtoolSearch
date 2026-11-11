@@ -199,7 +199,8 @@ class HybridSearchEngine:
         eff_operation = self._normalize_operation(operation or application_type)
 
         if insert_iso_code:
-            insert_iso_code = re.sub(r"\s+", "", insert_iso_code.upper())
+            from src.iso1832 import norm_code
+            insert_iso_code = re.sub(r"\s+", "", norm_code(insert_iso_code))
             if "-" in insert_iso_code:
                 code_part, _, cb_part = insert_iso_code.partition("-")
                 insert_iso_code = code_part
@@ -275,6 +276,10 @@ class HybridSearchEngine:
                     if len(matches) > 0:
                         break
 
+        did_you_mean: List[str] = []
+        if not matches and filters.get("insert_iso_code"):
+            did_you_mean = [c for c, _ in self._fuzzy_codes(filters["insert_iso_code"])]
+
         matches.sort(key=lambda m: (m["score"], m["item"].get("stock", 0)), reverse=True)
         matches = self._merge_duplicates(matches)
 
@@ -293,6 +298,7 @@ class HybridSearchEngine:
             "missing_parameters_in_query": missing_params,
             "follow_up_questions_for_user": follow_up_questions,
             "products": top_items,
+            "did_you_mean": did_you_mean,
         }
 
     @staticmethod
@@ -504,6 +510,33 @@ class HybridSearchEngine:
             if val is not None and val != "":
                 out[opt_key] = val
         return out
+
+    @staticmethod
+    def _grams(s: str, n: int = 3):
+        from collections import Counter
+        s = f"  {s.lower()}  "
+        return Counter(s[i:i + n] for i in range(len(s) - n + 1))
+
+    def _fuzzy_codes(self, code: str, k: int = 5):
+        """Векторный поиск похожих кодов: символьные 3-граммы + косинусная близость (без LLM)."""
+        from src.iso1832 import norm_code
+        if getattr(self, "_cg_src", None) is not self.catalog:
+            self._cg_src = self.catalog
+            self._code_grams = {}
+            for it in self.catalog:
+                c = it.get("_code_up") or ""
+                if c and c not in self._code_grams:
+                    self._code_grams[c] = self._grams(c)
+        qg = self._grams(norm_code(code))
+        qn = math.sqrt(sum(v * v for v in qg.values())) or 1.0
+        out = []
+        for c, g in self._code_grams.items():
+            num = sum(v * qg.get(t, 0) for t, v in g.items())
+            den = (math.sqrt(sum(v * v for v in g.values())) or 1.0) * qn
+            sim = num / den
+            if sim >= 0.6:
+                out.append((c, sim))
+        return sorted(out, key=lambda x: -x[1])[:k]
 
     def _filter_and_score(self, f: Dict[str, Any], query_tokens: List[str], allow_secondary_iso: bool = False) -> List[Dict[str, Any]]:
         results = []

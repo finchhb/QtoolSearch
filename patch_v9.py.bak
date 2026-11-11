@@ -1,0 +1,205 @@
+# -*- coding: utf-8 -*-
+"""patch_v9.py — QtoolSearch v8.4 -> v9.
+Положить iso1832.py и patch_v9.py в корень репозитория, запустить: python patch_v9.py
+Делает бэкапы *.v8.bak. Парсер ISO 1832 без LLM, русские формы/размеры, многострочный поиск,
+нечёткий поиск кодов, геометрия+размер+радиус в окне обучения."""
+import os, re, shutil, sys, py_compile
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+if not os.path.exists('iso1832.py'):
+    sys.exit('Положите iso1832.py в корень репозитория рядом с patch_v9.py')
+ISO_SRC = open('iso1832.py', encoding='utf-8').read()
+
+MM_TAIL = '''def detect_insert_shape(text: str) -> str:
+    """Форма пластины: код ISO или русские слова (ромб/треугольник/квадрат/тригон/...)."""
+    from src import iso1832
+    return iso1832.detect_shape(text)[0]
+
+
+def detect_clearance_angle(text: str) -> str:
+    """Задний угол: из кода ISO или явного указания (с границами чисел, без ложных '0°' внутри '80°')."""
+    from src import iso1832
+    return iso1832.detect_clearance(text)
+
+
+def detect_size_code(text: str) -> str:
+    """Код размера: из кода ISO, 'размер 16', 'треугольник 16', '1204', 'N мм' (длина кромки по ГОСТ)."""
+    from src import iso1832
+    shape = iso1832.detect_shape(text)[0]
+    return iso1832.detect_size(text, shape).get("size_code") or ""
+
+
+def detect_corner_radius(text: str) -> Optional[float]:
+    """Радиус вершины: из кода ISO, 'радиус 0,8', 'r0.8', 'R08'."""
+    from src import iso1832
+    return iso1832.detect_radius(text)
+'''
+
+SO = '<option value="">— не менять —</option><option value="C">C — ромб 80°</option><option value="D">D — ромб 55°</option><option value="V">V — ромб 35°</option><option value="E">E — ромб 75°</option><option value="M">M — ромб 86°</option><option value="T">T — треугольник 60°</option><option value="W">W — тригон 80°</option><option value="S">S — квадрат 90°</option><option value="R">R — круглая</option><option value="H">H — шестигранник 120°</option><option value="O">O — восьмигранник</option><option value="P">P — пятигранник</option><option value="L">L — прямоугольная</option><option value="A">A — параллелограмм 85°</option><option value="B">B — параллелограмм 82°</option><option value="K">K — параллелограмм 55°</option>'
+RO = '<option value="">— не менять —</option><option>0.2</option><option>0.4</option><option>0.8</option><option>1.2</option><option>1.6</option><option>2.4</option>'
+OPL = '''const OP_OPT = '<option value="">— не менять —</option><option value="finishing">чистовая</option><option value="semi_finishing">получистовая</option><option value="roughing">черновая</option>';'''
+ADM = '''<div><label>Правильный вид обработки</label><select id="top"><option value="">— не менять —</option><option value="finishing">чистовая</option><option value="semi_finishing">получистовая</option><option value="roughing">черновая</option></select></div></div>'''
+
+EDITS = [
+    ('src/engine.py', '''        iso_code_m = re.search(r"(?<![A-Z0-9])([CWTDSVR][NCTBPEFG][MGU][A-Z])\\s?([0-9][0-9A-Z]{0,5})?(?![A-Z])", user_query.upper())''', '''        det = iso1832.detect_all(user_query)'''),
+    ('src/engine.py', '''            "insert_iso_code": ((iso_code_m.group(1) + (iso_code_m.group(2) or "")).replace(" ", "")) if iso_code_m else None,
+            "insert_shape": detect_insert_shape(user_query) or None,
+            "clearance_angle": detect_clearance_angle(user_query) or None,
+            "size_code": detect_size_code(user_query) or None,
+            "corner_radius_mm": detect_corner_radius(user_query),''', '''            "insert_iso_code": det["code"] or None,
+            "insert_shape": det["shape"] or None,
+            "clearance_angle": det["clearance"] or None,
+            "size_code": det["size_code"] or None,
+            "corner_radius_mm": det["radius"],'''),
+    ('src/engine.py', '''    def process_query(self, user_query: str, chat_history: Optional[List[Dict[str, Any]]] = None, force_local: bool = False) -> Dict[str, Any]:
+        res = self.process_query_autonomous(user_query, allow_review=not force_local)''', '''    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool) -> Dict[str, Any]:
+        """Несколько позиций в одном запросе: каждая ищется отдельно, ответ объединяется."""
+        texts, all_prods, steps, first = [], [], [], None
+        seen = set()
+        for i, pos in enumerate(positions, 1):
+            r = self.process_query_autonomous(pos["text"], allow_review=allow_review)
+            if first is None:
+                first = r
+            qty = f" — {pos['qty']} шт" if pos.get("qty") else ""
+            texts.append(f"## Позиция {i}: {pos['text']}{qty}\\n\\n{r.get('response_text', '')}")
+            for pr in (r.get("tool_result") or {}).get("products") or []:
+                if pr.get("sku") not in seen:
+                    seen.add(pr.get("sku"))
+                    all_prods.append(pr)
+            steps.extend(r.get("tool_steps") or [])
+        merged = dict(first)
+        merged.update({"decision": "multi_position", "response_text": "\\n\\n---\\n\\n".join(texts),
+                       "tool_result": {**(first.get("tool_result") or {}), "products": all_prods[:30]},
+                       "tool_steps": steps, "positions": positions})
+        return merged
+
+    def process_query(self, user_query: str, chat_history: Optional[List[Dict[str, Any]]] = None, force_local: bool = False) -> Dict[str, Any]:
+        allow_review = (not force_local) and os.environ.get("ADVISOR_DISABLE_LLM", "1") != "1"
+        positions = iso1832.split_positions(user_query)
+        if len(positions) > 1:
+            return self._process_multi(positions, allow_review)
+        res = self.process_query_autonomous(user_query, allow_review=allow_review)'''),
+    ('src/engine.py', '''            if example["correct_operation"]:
+                search_args["operation"] = example["correct_operation"]''', '''            if example["correct_operation"]:
+                search_args["operation"] = example["correct_operation"]
+            if example.get("correct_shape"):
+                search_args["insert_shape"] = example["correct_shape"]
+            if example.get("correct_size"):
+                search_args["size_code"] = example["correct_size"]
+            if example.get("correct_radius"):
+                try:
+                    search_args["corner_radius_mm"] = float(example["correct_radius"])
+                except ValueError:
+                    pass'''),
+    ('src/engine.py', '''        text = self._format_recommendation_response(user_query, tool_res, holder_res)''', '''        text = self._format_recommendation_response(user_query, tool_res, holder_res)
+        if tool_res.get("did_you_mean") and not tool_res.get("products"):
+            text += "\\n\\n> 💡 Возможно, вы имели в виду: " + ", ".join(f"`{c}`" for c in tool_res["did_you_mean"][:5])'''),
+    ('src/engine.py', '''                "shape": args.get("insert_shape") or "", "size": args.get("size_code") or "", "code": args.get("insert_iso_code") or "",''', '''                "shape": args.get("insert_shape") or "", "size": args.get("size_code") or "", "code": args.get("insert_iso_code") or "",
+                "radius": args.get("corner_radius_mm"),'''),
+    ('src/clarification_advisor.py', '''        has_iso_code = bool(re.search(r'\\b[CWTDSVR][NCTB][MG]\\b', query.upper())) or bool(shape)''', '''        has_iso_code = bool(re.search(r'\\b[ABCDEFGHKLMOPRSTVW][ABCDEGFNP][ACEFGHJKLMNU][NRFAMGWTQUBHCJX](\\s?\\d|\\b)', query.upper())) or bool(shape)'''),
+    ('src/training.py', '''FIELDS = ["id", "ts", "query", "query_norm", "parser_iso", "parser_operation", "parser_top_skus",
+          "correct_iso", "correct_operation", "correct_skus", "comment", "status", "rules_added"]''', '''FIELDS = ["id", "ts", "query", "query_norm", "parser_iso", "parser_operation", "parser_top_skus",
+          "correct_iso", "correct_operation", "correct_shape", "correct_size", "correct_radius",
+          "correct_skus", "comment", "status", "rules_added"]
+SHAPE_OK = set("ABCDEFGHKLMOPRSTVW")'''),
+    ('src/training.py', '''def add_example(query: str, correct_iso: str = "", correct_operation: str = "", correct_skus: str = "", comment: str = "",
+                parser: Optional[Dict[str, Any]] = None) -> Dict[str, str]:''', '''def add_example(query: str, correct_iso: str = "", correct_operation: str = "", correct_skus: str = "", comment: str = "",
+                parser: Optional[Dict[str, Any]] = None, correct_shape: str = "", correct_size: str = "",
+                correct_radius: str = "") -> Dict[str, str]:'''),
+    ('src/training.py', '''        "correct_iso": iso if iso in ISO_OK else "", "correct_operation": op if op in OP_OK else "",''', '''        "correct_iso": iso if iso in ISO_OK else "", "correct_operation": op if op in OP_OK else "",
+        "correct_shape": (correct_shape or "").strip().upper() if (correct_shape or "").strip().upper() in SHAPE_OK else "",
+        "correct_size": (correct_size or "").strip().zfill(2) if (correct_size or "").strip().isdigit() and len((correct_size or "").strip()) <= 2 else "",
+        "correct_radius": (correct_radius or "").strip().replace(",", ".") if re.fullmatch(r"\\d+(?:[.,]\\d+)?", (correct_radius or "").strip()) else "",'''),
+    ('src/training.py', '''        rows = [r for r in _read() if r["status"] != "rejected" and (r["correct_iso"] or r["correct_operation"] or r["correct_skus"])]''', '''        rows = [r for r in _read() if r["status"] != "rejected" and (r["correct_iso"] or r["correct_operation"] or r["correct_skus"] or r["correct_shape"] or r["correct_size"] or r["correct_radius"])]'''),
+    ('app.py', '''MAX_QUERY_LEN = 500''', '''MAX_QUERY_LEN = 4000'''),
+    ('app.py', '''INSERT_CODE_RE = re.compile(r"\\b[CWTDSVR][NCTBPEFG][MGU][A-Z]\\s?\\d{4,6}\\b")''', '''INSERT_CODE_RE = re.compile(r"\\b[ABCDEFGHKLMOPRSTVW][ABCDEGFNP][ACEFGHJKLMNU][NRFAMGWTQUBHCJX]\\s?\\d{2}(?:T\\d|\\d{2})\\d{2}\\b")'''),
+    ('app.py', '''    if words > 8 or INSERT_CODE_RE.search(q.upper()) or re.search(r"аналог|замен|кросс|вместо", q.lower()):''', '''    if words > 8 or "\\n" in q or INSERT_CODE_RE.search(q.upper()) or re.search(r"аналог|замен|кросс|вместо", q.lower()):'''),
+    ('app.py', '''                ex = training.add_example(q, str(body.get("correct_iso", "")), str(body.get("correct_operation", "")),
+                                          str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed)
+                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]):''', '''                ex = training.add_example(q, str(body.get("correct_iso", "")), str(body.get("correct_operation", "")),
+                                          str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed,
+                                          str(body.get("correct_shape", "")), str(body.get("correct_size", "")), str(body.get("correct_radius", "")))
+                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]
+                        or ex["correct_shape"] or ex["correct_size"] or ex["correct_radius"]):'''),
+    ('app.py', '''"Заполните хотя бы одно поле: группу ISO, вид обработки, артикулы или комментарий"''', '''"Заполните хотя бы одно поле: группу ISO, вид обработки, геометрию, размер, радиус, артикулы или комментарий"'''),
+    ('src/llm_client.py', '''    def is_configured(self) -> bool:
+        return bool(self.api_key and self.models and self.base_url)''', '''    def is_configured(self) -> bool:
+        if not (self.api_key and self.models and self.base_url):
+            return False
+        if "ваш_ключ" in self.api_key.lower() or "your-" in self.base_url:
+            return False  # заглушка из data/llm_config.json — не считаем настроенным
+        return True'''),
+    ('src/hybrid_search.py', '''            insert_iso_code = re.sub(r"\\s+", "", insert_iso_code.upper())''', '''            from src.iso1832 import norm_code
+            insert_iso_code = re.sub(r"\\s+", "", norm_code(insert_iso_code))'''),
+    ('src/hybrid_search.py', '''        matches.sort(key=lambda m: (m["score"], m["item"].get("stock", 0)), reverse=True)''', '''        did_you_mean: List[str] = []
+        if not matches and filters.get("insert_iso_code"):
+            did_you_mean = [c for c, _ in self._fuzzy_codes(filters["insert_iso_code"])]
+
+        matches.sort(key=lambda m: (m["score"], m["item"].get("stock", 0)), reverse=True)'''),
+    ('src/hybrid_search.py', '''            "products": top_items,
+        }''', '''            "products": top_items,
+            "did_you_mean": did_you_mean,
+        }'''),
+    ('src/hybrid_search.py', '''    def _filter_and_score(self, f: Dict[str, Any], query_tokens: List[str], allow_secondary_iso: bool = False) -> List[Dict[str, Any]]:''', '''    @staticmethod
+    def _grams(s: str, n: int = 3):
+        from collections import Counter
+        s = f"  {s.lower()}  "
+        return Counter(s[i:i + n] for i in range(len(s) - n + 1))
+
+    def _fuzzy_codes(self, code: str, k: int = 5):
+        """Векторный поиск похожих кодов: символьные 3-граммы + косинусная близость (без LLM)."""
+        from src.iso1832 import norm_code
+        if getattr(self, "_cg_src", None) is not self.catalog:
+            self._cg_src = self.catalog
+            self._code_grams = {}
+            for it in self.catalog:
+                c = it.get("_code_up") or ""
+                if c and c not in self._code_grams:
+                    self._code_grams[c] = self._grams(c)
+        qg = self._grams(norm_code(code))
+        qn = math.sqrt(sum(v * v for v in qg.values())) or 1.0
+        out = []
+        for c, g in self._code_grams.items():
+            num = sum(v * qg.get(t, 0) for t, v in g.items())
+            den = (math.sqrt(sum(v * v for v in g.values())) or 1.0) * qn
+            sim = num / den
+            if sim >= 0.6:
+                out.append((c, sim))
+        return sorted(out, key=lambda x: -x[1])[:k]
+
+    def _filter_and_score(self, f: Dict[str, Any], query_tokens: List[str], allow_secondary_iso: bool = False) -> List[Dict[str, Any]]:'''),
+    ('src/ui.py', '''  <input id="q" maxlength="500" placeholder="Например: чистовое точение нержавейки 12Х18Н10Т, CNMG 120408" required>''', '''  <textarea id="q" rows="2" maxlength="4000" style="resize:vertical;font:inherit" placeholder="Например: CNMG 120408 10 шт; WNMG 080408 5 шт. Можно несколько позиций — каждая с новой строки (Shift+Enter — перенос)" required></textarea>'''),
+    ('src/ui.py', '''$("f").onsubmit = e => { e.preventDefault(); const t = $("q").value.trim(); if (!t) return; $("q").value = ""; ask(t); };''', '''$("f").onsubmit = e => { e.preventDefault(); const t = $("q").value.trim(); if (!t) return; $("q").value = ""; ask(t); };
+$("q").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("f").requestSubmit(); } });'''),
+    ('src/ui.py', OPL, OPL + '\n' + "const SHAPE_OPT = '" + SO + "';" + '\n' + "const RAD_OPT = '" + RO + "';"),
+    ('src/ui.py', '''    '<div class="grid"><div>Правильная группа ISO<select class="ti">' + ISO_OPT + '</select></div><div>Правильный вид обработки<select class="to">' + OP_OPT + '</select></div></div>' +''', '''    '<div class="grid"><div>Правильная группа ISO<select class="ti">' + ISO_OPT + '</select></div><div>Правильный вид обработки<select class="to">' + OP_OPT + '</select></div></div>' +
+    '<div class="grid"><div>Геометрия (форма)<select class="tsh">' + SHAPE_OPT + '</select></div><div>Размер (код кромки)<input class="tz" maxlength="2" placeholder="напр. 12 (из CNMG12…)"></div><div>Радиус вершины, мм<select class="tr">' + RAD_OPT + '</select></div></div>' +'''),
+    ('src/ui.py', '''    const body = { query, correct_iso: g(".ti").value, correct_operation: g(".to").value, correct_skus: g(".ts").value, comment: g(".tc").value, parsed: p };''', '''    const body = { query, correct_iso: g(".ti").value, correct_operation: g(".to").value, correct_shape: g(".tsh").value, correct_size: g(".tz").value, correct_radius: g(".tr").value, correct_skus: g(".ts").value, comment: g(".tc").value, parsed: p };'''),
+    ('src/ui.py', '''    '<div class="hint">Парсер понял: ISO ' + (p.iso || "не определено") + ', обработка ' + (p.operation || "не указана") + (p.shape ? ", форма " + p.shape : "") + (p.size ? ", размер " + p.size : "") + (p.code ? ", код " + p.code : "") + '.</div>' +''', '''    '<div class="hint">Парсер понял: ISO ' + (p.iso || "не определено") + ', обработка ' + (p.operation || "не указана") + (p.shape ? ", форма " + p.shape : "") + (p.size ? ", размер " + p.size : "") + (p.radius != null ? ", радиус " + p.radius : "") + (p.code ? ", код " + p.code : "") + '.</div>' +'''),
+    ('src/ui.py', ADM, ADM + '\n<div class="row"><div><label>Геометрия (форма)</label><select id="tshape">' + SO + '</select></div>\n<div><label>Размер (код кромки)</label><input id="tsize" maxlength="2" placeholder="напр. 12"></div>\n<div><label>Радиус вершины, мм</label><select id="trad">' + RO + '</select></div></div>'),
+    ('src/ui.py', '''{query:q,correct_iso:v("tiso"),correct_operation:v("top"),correct_skus:v("tsk"),comment:v("tcm"),parsed:LASTP}''', '''{query:q,correct_iso:v("tiso"),correct_operation:v("top"),correct_shape:v("tshape"),correct_size:v("tsize"),correct_radius:v("trad"),correct_skus:v("tsk"),comment:v("tcm"),parsed:LASTP}'''),
+]
+
+FILES = ['app.py','src/engine.py','src/training.py','src/materials_mapping.py','src/hybrid_search.py','src/llm_client.py','src/ui.py','src/clarification_advisor.py']
+for f in FILES:
+    if not os.path.exists(f):
+        sys.exit('Не найден ' + f + ' — запускайте из корня репозитория')
+    if not os.path.exists(f + '.v8.bak'):
+        shutil.copy(f, f + '.v8.bak')
+open('src/iso1832.py','w',encoding='utf-8').write(ISO_SRC)
+s = open('src/materials_mapping.py',encoding='utf-8').read()
+open('src/materials_mapping.py','w',encoding='utf-8').write(s[:s.index('def detect_insert_shape')] + MM_TAIL)
+s = open('src/engine.py',encoding='utf-8').read()
+if 'from src import iso1832' not in s:
+    m = re.search(r'^from src\.materials_mapping import', s, re.M)
+    s = s[:m.start()] + 'from src import iso1832\n' + s[m.start():]
+    open('src/engine.py','w',encoding='utf-8').write(s)
+for path, old, new in EDITS:
+    s = open(path,encoding='utf-8').read()
+    n = s.count(old)
+    if n != 1:
+        sys.exit(f'ОШИБКА в {path}: якорь встречается {n} раз (нужен 1): {old[:70]!r}. Восстановите файлы из *.v8.bak')
+    open(path,'w',encoding='utf-8').write(s.replace(old, new))
+for f in FILES + ['src/iso1832.py']:
+    py_compile.compile(f, doraise=True)
+print('Готово: v9 применена. Перезапустите run.bat.')
+print('LLM по умолчанию выключен (ADVISOR_DISABLE_LLM=1). Включить: ADVISOR_DISABLE_LLM=0 + рабочий ключ.')
