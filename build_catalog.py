@@ -152,9 +152,7 @@ def build_qtool_url(elem_id: str, category: str = "turning_insert") -> str:
 
 def download_price_file(dest_path: str, url: str, timeout: int = 30) -> Tuple[bool, str]:
     os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = ssl.create_default_context()  # сертификат проверяем: прайс влияет на цены, подмена по MITM недопустима
     req = urllib.request.Request(
         url,
         headers={

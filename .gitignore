@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Секреты и локальная конфигурация
+.env
+data/llm_config.json
+
+# Резервные копии и патчи (архив лежит в legacy/)
+*.bak
+*.bak_*
+
+# Рабочие артефакты прогонов
+data/eval_report.csv
+data/eval_training_report.csv
+data/review_log.jsonl
+data/rates.json

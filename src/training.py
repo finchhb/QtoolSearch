@@ -207,6 +207,16 @@ def suggest_tokens(query: str) -> List[str]:
     return out[:8]
 
 
+def _rule_regex(token: str) -> str:
+    """Марка может быть набрана латиницей или кириллицей: g→г, d→д не переводятся normalize,
+    поэтому в правиле допускаем оба варианта символа (иначе «GC4325» и «ГС4325» — разные правила)."""
+    out = []
+    for ch in token:
+        alt = {"d": "д", "g": "г"}.get(ch)
+        out.append(f"[{ch}{alt}]" if alt else re.escape(ch))
+    return "".join(out)
+
+
 def add_material_rules(tokens: List[str], iso: str, note: str = "") -> int:
     iso = (iso or "").strip().upper()
     if iso not in ISO_OK:
@@ -221,7 +231,7 @@ def add_material_rules(tokens: List[str], iso: str, note: str = "") -> int:
         t = normalize(t).replace(" ", "")
         if len(t) < 3:
             continue
-        esc = re.escape(t)
+        esc = _rule_regex(t)
         pat = r"(?<![а-яa-z0-9])" + esc + r"(?![а-яa-z0-9])"
         if pat in existing:
             continue

@@ -1,0 +1,21 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    env:
+      SKIP_NETWORK_SYNC: "1"
+      REVIEW_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Синтаксис
+        run: python -m compileall -q app.py build_catalog.py eval.py src
+      - name: Тесты
+        run: python -m unittest discover -s tests -v

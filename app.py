@@ -1,5 +1,5 @@
 """
-app.py - веб-сервер подбора токарных пластин (v7).
+app.py - веб-сервер подбора токарных пластин (v8.4).
 
 Основной движок — внутренний парсер (src/engine.py). LLM (любой OpenAI-совместимый API: Yandex AI Studio, Cloud.ru, MWS, своя модель) — только проверяющий (src/reviewer.py).
 Режимы (переменная окружения ADVISOR_MODE):
@@ -184,14 +184,15 @@ def public_result(res: Dict[str, Any]) -> Dict[str, Any]:
 # --------------------------------------------------------------------------------------------------
 class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
     timeout = 120
-    server_version = "ToolAdvisor/7"
+    server_version = "ToolAdvisor/8.4"
     sys_version = ""
 
     def log_message(self, format, *args):  # noqa: A002
         pass
 
     def _ip(self) -> str:
-        if TRUST_PROXY:
+        # X-Forwarded-For принимаем только от локального прокси (nginx на 127.0.0.1), иначе клиент подделает IP
+        if TRUST_PROXY and self.client_address[0] in ("127.0.0.1", "::1"):
             xff = self.headers.get("X-Forwarded-For", "")
             if xff:
                 return xff.split(",")[-1].strip()[:64]
@@ -246,20 +247,16 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
             return None
 
     def _admin_ok(self) -> bool:
-        client_ip = (self.client_address[0] or "").lower()
-        is_local = (
-            client_ip in ("127.0.0.1", "::1", "localhost")
-            or client_ip.startswith("192.168.")
-            or client_ip.startswith("10.")
-            or client_ip.startswith("172.")
-            or client_ip in ("cdek1", "cdek1.rinscom.com", "desktop", "pc")
-        )
-        if is_local:
+        """Без токена админка открыта только на этом же компьютере (loopback).
+        Частные сети 10/172/192.168 больше не считаются доверенными: при ADVISOR_HOST=0.0.0.0 это открывало
+        админку всей локальной сети, а за nginx клиентский адрес приходит из X-Forwarded-For."""
+        client_ip = (self._ip() or "").lower()
+        if client_ip in ("127.0.0.1", "::1"):
             return True
         tok = self.headers.get("X-Admin-Token", "")
         if ADMIN_TOKEN:
-            return hmac.compare_digest(tok.encode(), ADMIN_TOKEN.encode())
-        return not PUBLIC
+            return hmac.compare_digest(tok.encode("utf-8"), ADMIN_TOKEN.encode("utf-8"))
+        return False
 
     @staticmethod
     def _sid(body: Dict[str, Any], fallback: str) -> str:
@@ -285,7 +282,8 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 updated = ""
             out = {"total": st["total"], "in_stock": st["in_stock"], "catalog_updated": updated}
-            if not PUBLIC:  # кнопки настроек в шапке чата видны только при локальном запуске
+            admin_ok = self._admin_ok()
+            if admin_ok:  # кнопки настроек в шапке чата видны только тем, кому доступна админка
                 out["local_admin"] = True
                 out["llm_on"] = bool(engine.llm.is_configured() and engine.reviewer.enabled)
             return self._json(out)
@@ -312,7 +310,7 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path.startswith("/api/admin/"):
             if not self._admin_ok():
-                return self._json({"error": "Нужен админ-токен" if (PUBLIC or ADMIN_TOKEN) else "Админка доступна только с этого компьютера"}, 403)
+                return self._json({"error": "Нужен админ-токен" if ADMIN_TOKEN else "Админка доступна только с этого компьютера (для доступа по сети задайте ADMIN_TOKEN)"}, 403)
             body = self._body(MAX_UPLOAD * 2 if path.endswith("upload_xlsx") else MAX_BODY)
             if body is None:
                 return

@@ -123,7 +123,7 @@ _BUILTIN_MATERIAL_RULES = [
 _MATERIALS_FILES = [os.path.join("data", "materials_iso.csv"), os.path.join("data", "materials.csv")]  # справочник компании, затем правки технолога
 _MATERIALS_CSV = _MATERIALS_FILES[-1]
 _compiled_rules = None
-_LATIN2CYR = str.maketrans("abcehkmoptxy", "авсенкмортху")  # латинские двойники -> кириллица (20X13 набрали латиницей)
+_LATIN2CYR = str.maketrans("abcehkmoptxygd", "авсенкмортхугд")  # латинские двойники -> кириллица (20X13 набрали латиницей)
 
 
 def _load_rules():

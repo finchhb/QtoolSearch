@@ -222,6 +222,10 @@ class HybridSearchEngine:
                 "резьбовая", "канавочная", "нужна", "подбери", "посоветуй", "по", "размер", "размером"
             }
             query_tokens = [t for t in re.findall(r"[a-zа-я0-9.]+", q_clean) if t not in stop_words]
+            # Тот же токен кириллицей/латиницей: «25x25» и «25х25», «PCLNR» и «РСLNR» в каталоге встречаются в обоих видах
+            homoglyphs = str.maketrans("abcehkmoptxygd", "авсенкмортхугд")
+            extra = [alt for t in query_tokens if (alt := t.translate(homoglyphs)) != t]
+            query_tokens.extend(t for t in extra if t not in query_tokens)
 
         initial_filters = {
             "category": category or "turning_insert",
@@ -247,6 +251,7 @@ class HybridSearchEngine:
         filters = dict(initial_filters)
 
         matches = self._filter_and_score(filters, query_tokens, allow_secondary_iso=False)
+        strict_matches = list(matches)
 
         relaxation_info = {"relaxed": False, "steps": [], "hints": {}}
 
@@ -282,6 +287,8 @@ class HybridSearchEngine:
 
         matches.sort(key=lambda m: (m["score"], m["item"].get("stock", 0)), reverse=True)
         matches = self._merge_duplicates(matches)
+        # Точных совпадений считаем после склейки дублей — иначе счётчик расходится с total_found
+        exact_found = len(matches) if not relaxation_info["relaxed"] else len(self._merge_duplicates(strict_matches))
 
         selected_matches = self._select_diverse_top(matches, initial_filters, limit, active_source=active_source)
         top_items = [self._clean_item_for_output(m["item"], active_source=active_source) for m in selected_matches]
@@ -290,7 +297,9 @@ class HybridSearchEngine:
 
         return {
             "source": "таблица остатков (Rinscom.com / qtool.ru)",
+            "query_category": category or "turning_insert",
             "total_found": len(matches),
+            "exact_found": exact_found,
             "returned_count": len(top_items),
             "relaxation_applied": relaxation_info["relaxed"],
             "relaxation_notes": "; ".join(relaxation_info["steps"]) if relaxation_info["steps"] else "Точное совпадение по фильтрам таблицы остатков",

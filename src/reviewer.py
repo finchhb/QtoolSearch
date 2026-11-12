@@ -23,6 +23,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 LOG_PATH = os.path.join("data", "review_log.jsonl")
 
+
+def review_enabled() -> bool:
+    """Единый признак включения проверки LLM для движка, статуса в UI и самого Reviewer.
+    Выключается любой из переменных: ADVISOR_DISABLE_LLM=1 или REVIEW_ENABLED=0."""
+    return os.environ.get("ADVISOR_DISABLE_LLM", "0") != "1" and os.environ.get("REVIEW_ENABLED", "1") != "0"
+
 ENUMS = {
     "iso_group": {"P", "M", "K", "N", "S", "H"},
     "operation": {"finishing", "medium", "roughing"},
@@ -47,12 +53,12 @@ SYSTEM_PROMPT = """Ты — технолог-проверяющий для ка�
 class Reviewer:
     def __init__(self, client: Any, sample_rate: Optional[float] = None, max_per_hour: Optional[int] = None, max_per_day: Optional[int] = None, log_path: str = LOG_PATH):
         self.client = client
-        env_rate = os.environ.get("AUDIT_SAMPLE_RATE", os.environ.get("REVIEW_SAMPLE_RATE", "1.0"))
+        env_rate = os.environ.get("AUDIT_SAMPLE_RATE", os.environ.get("REVIEW_SAMPLE_RATE", "0.15"))
         self.sample_rate = float(env_rate) if sample_rate is None else sample_rate
         self.max_per_hour = int(os.environ.get("REVIEW_MAX_PER_HOUR", "60")) if max_per_hour is None else max_per_hour
         # Суточный потолок вызовов LLM: для платного провайдера это ещё и предел расходов
         self.max_per_day = int(os.environ.get("REVIEW_MAX_PER_DAY", "300")) if max_per_day is None else max_per_day
-        self.enabled = os.environ.get("REVIEW_ENABLED", "1") != "0"
+        self.enabled = review_enabled()
         self.log_path = log_path
         self.extra_rules = ""
         self._calls = deque()

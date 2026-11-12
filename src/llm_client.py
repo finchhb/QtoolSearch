@@ -11,8 +11,8 @@ OpenRouter с 27.06.2026 не принимает запросы из РФ — п
   Своя модель        Ollama: LLM_BASE_URL=http://localhost:11434/v1  LLM_API_KEY=none  LLM_MODELS=qwen2.5:14b-instruct
 Переменные окружения или .env:
   LLM_BASE_URL, LLM_API_KEY, LLM_MODELS (через запятую, по приоритету; при 429/5xx/404 берётся следующая),
-  LLM_EXTRA_HEADERS и LLM_EXTRA_PARAMS (JSON-объекты), LLM_MAX_TOKENS (по умолчанию 1200: «думающие» модели тратят часть на рассуждение),
-  LLM_TIMEOUT (общий дедлайн одной проверки, по умолчанию 18 с; для CPU-инференса ставь 60+).
+  LLM_EXTRA_HEADERS и LLM_EXTRA_PARAMS (JSON-объекты), LLM_MAX_TOKENS (по умолчанию 250),
+  LLM_TIMEOUT (общий дедлайн одной проверки, по умолчанию 90 с; для CPU-инференса можно увеличить).
 Прокси: urllib сам использует HTTPS_PROXY / HTTP_PROXY. В режиме ADVISOR_MODE=public ключ берётся только из окружения.
 """
 import json
@@ -128,6 +128,15 @@ class LLMClient:
         if os.environ.get("LLM_TITLE"):
             headers["X-Title"] = os.environ["LLM_TITLE"]
         headers.update({str(k): str(v) for k, v in self.extra_headers.items()})
+        # HTTP-заголовки кодируются в latin-1: кириллица в ключе или доп. заголовке раньше роняла запрос
+        # с "'latin-1' codec can't encode characters". Ключ проверяем явно, остальные такие заголовки отбрасываем.
+        for name in list(headers):
+            try:
+                str(headers[name]).encode("latin-1")
+            except UnicodeEncodeError:
+                if name.lower() == "authorization":
+                    raise LLMError(f"{model}: ключ LLM содержит не-ASCII символы — проверьте LLM_API_KEY", 401)
+                headers.pop(name, None)
         payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
         payload.update(self.extra_params)
         req = urllib.request.Request(self.base_url + "/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")

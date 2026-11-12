@@ -33,7 +33,7 @@ from src.clarification_advisor import ClarificationAdvisor
 from src import rates
 from src import training
 from src.llm_client import LLMClient
-from src.reviewer import Reviewer
+from src.reviewer import Reviewer, review_enabled
 from src.hybrid_search import HybridSearchEngine
 from src import iso1832
 from src.materials_mapping import detect_material_note, find_unknown_marks
@@ -636,7 +636,7 @@ class ToolAdvisorEngine:
         return merged
 
     def process_query(self, user_query: str, chat_history: Optional[List[Dict[str, Any]]] = None, force_local: bool = False) -> Dict[str, Any]:
-        allow_review = (not force_local) and os.environ.get("ADVISOR_DISABLE_LLM", "1") != "1"
+        allow_review = (not force_local) and review_enabled()
         positions = iso1832.split_positions(user_query)
         if len(positions) > 1:
             return self._process_multi(positions, allow_review)
@@ -824,6 +824,28 @@ class ToolAdvisorEngine:
         # 2. Запрос про державки/оправки
         is_holder_query = any(w in lower for w in ["державк", "оправк", "pcln", "mcln", "pwln", "ptgn", "pdjn", "mvjn", "pssn", "sclc", "sdjc", "stgc"])
         if is_holder_query and not re.search(r"\b(сталь|нержав|чугун|алюмин|титан|40х|12х18)\b", lower):
+            # Конкретную державку (сечение 25x25 или код PCLNR…) ищем в каталоге оснастки;
+            # «державка под пластину CNMG» — это запрос про совместимость, его обрабатывает find_compatible.
+            holder_geometry = re.search(r"\b\d{2}\s*[xх×]\s*\d{2}\b", lower) or re.search(r"\b(pcln|mcln|pwln|ptgn|pdjn|mvjn|pssn|sclc|sdjc|stgc)[a-z]*\s*\d", lower)
+            if holder_geometry:
+                holder_res = self.search_engine.search(category="turning_holder", text_query=user_query, in_stock_only=True, limit=1000, active_source=self.active_source)
+                prods = holder_res.get("products") or []
+                size_m = re.search(r"\b(\d{2})\s*[xх×]\s*(\d{2})\b", lower)
+                if size_m:
+                    w, h = size_m.groups()
+                    rx_size = re.compile(rf"{w}\s*[xх×]\s*{h}")
+                    prods = [p for p in prods if rx_size.search((p.get("name") or "").lower()) or rx_size.search((p.get("sku") or "").lower())]
+                holder_res["products"] = prods[:6]
+                holder_res["total_found"] = len(prods)
+                if holder_res["products"]:
+                    holder_res["source"] = self.price_source_label
+                    holder_res["follow_up_questions_for_user"] = []
+                    return {
+                        "mode": "local_stock_table", "decision": "direct_recommendation", "tool_called": "search_products",
+                        "tool_result": holder_res, "llm_checked": False, "llm_status": "not_needed",
+                        "tool_steps": [{"step": 1, "function": "search_products", "arguments": {"category": "turning_holder", "text_query": user_query}, "result": holder_res}],
+                        "response_text": self._format_recommendation_response(user_query, holder_res, {}),
+                    }
             comp_res = self.execute_tool("find_compatible", {"sku": user_query})
             prods = comp_res.get("compatible_items") or comp_res.get("matching_inserts_in_stock") or []
             fake = {"source": self.price_source_label, "total_found": len(prods), "relaxation_applied": False, "relaxation_notes": "", "products": prods}
@@ -976,9 +998,17 @@ class ToolAdvisorEngine:
         lines = []
         first = products[0]
         req_iso = search_res.get("iso_requested", "__unset__")
-        iso_label = (f"Группа ISO: **{req_iso}**" if req_iso else "группа ISO материала не указана") if req_iso != "__unset__" else f"Группа ISO: **{first.get('iso_group') or 'P'}**"
+        if search_res.get("query_category") == "turning_holder":
+            iso_label = "оснастка: державки"
+        else:
+            iso_label = (f"Группа ISO: **{req_iso}**" if req_iso else "группа ISO материала не указана") if req_iso != "__unset__" else f"Группа ISO: **{first.get('iso_group') or 'P'}**"
         lines.append(f"### Подбор по таблице складских остатков (`{self.price_source_label}`)\n")
-        lines.append(f"Найдено подходящих позиций в наличии: **{search_res.get('total_found', len(products))} шт.** ({iso_label})\n")
+        total = search_res.get("total_found", len(products))
+        exact = search_res.get("exact_found", total)
+        if exact != total:
+            lines.append(f"Найдено в наличии: **{exact}** точных совпадений, после ослабления фильтров — **{total}** ({iso_label})\n")
+        else:
+            lines.append(f"Найдено подходящих позиций в наличии: **{total} шт.** ({iso_label})\n")
 
         if search_res.get("relaxation_applied"):
             lines.append(f"> ℹ️ *Примечание фильтрации: {search_res.get('relaxation_notes')}*\n")
