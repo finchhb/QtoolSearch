@@ -1,7 +1,9 @@
 """Детерминированный поиск по каталогу qtool.ru на синтетическом наборе всех групп."""
+import re
 import unittest
 
 from src.catalog_search import (
+    FAMILY_KEYWORDS,
     CatalogSearchEngine,
     Query,
     clamp_accepts_hole,
@@ -81,6 +83,12 @@ ITEMS = [
          sku="SBHA12-20", stock=5, price=5000.0),
     item("accessory", "tool_holder", "SBHA20-32 держатель осевого инструмента токарного станка",
          sku="SBHA20-32", stock=3, price=5200.0),
+    item("accessory", "machine_jaw",
+         "250мм ГОСТ шаг 9мм кулачки обратные цельные. каленые (z) Qtool",
+         sku="83088", stock=4, price=900.0),
+    item("accessory", "machine_jaw",
+         "К11-250 кулачки сборные базовые и накладные. каленые (z) Qtool",
+         sku="83104", stock=6, price=1500.0),
 ]
 
 
@@ -110,6 +118,22 @@ class SelfContainedQueryTest(unittest.TestCase):
     def test_clarifications_are_not_self_contained(self):
         for q in ("12", "под CNMG12", "под пластину DNMG15", "чистовая", "M10", "cnmg12"):
             self.assertFalse(is_self_contained_query(q), q)
+
+    def test_jaw_query_is_not_a_clarification(self):
+        # «кулачки…» после запроса про держатели раньше склеивалось и повторяло выдачу
+        self.assertTrue(is_self_contained_query("кулачки каленые к11 шаг 5"))
+
+
+class FamilyTopicDriftTest(unittest.TestCase):
+    """Каждое слово-группа из FAMILY_KEYWORDS — самостоятельный запрос, а не уточнение.
+
+    Ловит дрейф: раньше список тем был отдельным и новые группы («кулачки») в него не попадали.
+    """
+
+    def test_every_family_word_starts_new_query(self):
+        for _, pattern in FAMILY_KEYWORDS:
+            for stem in re.findall(r"[А-Яа-яЁё]{2,}", re.sub(r"\[[^\]]*\]", " ", pattern)):
+                self.assertTrue(is_self_contained_query(stem.lower() + "ы"), (pattern, stem))
 
 
 class CatalogSearchTest(unittest.TestCase):
@@ -464,6 +488,29 @@ class ToolHolderTest(unittest.TestCase):
         self.assertEqual([p["sku"] for p in res["products"]], ["SBHA12-20"])
         self.assertIn("под хвостовик: 20 мм", res["chips"])
         self.assertNotIn("Укажите диаметр хвостовика", " ".join(res["follow_ups"]))
+
+
+class MachineJawTest(unittest.TestCase):
+    """«кулачки» — подгруппа оснастки; «3-х кулачковый патрон» — это сам патрон."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_jaw_word_selects_machine_jaws(self):
+        q = Query("кулачки каленые к11")
+        self.assertEqual(q.family, "accessory")
+        self.assertEqual(q.category_hints, ["machine_jaw"])
+
+    def test_chuck_query_is_not_narrowed_to_jaws(self):
+        q = Query("патрон 3-х кулачковый 100")
+        self.assertEqual(q.family, "accessory")
+        self.assertNotIn("machine_jaw", q.category_hints)
+
+    def test_jaw_search_returns_jaws_only(self):
+        res = self.engine.search("кулачки каленые")
+        self.assertEqual({p["category"] for p in res["products"]}, {"machine_jaw"})
+        self.assertIn("тип: кулачки", res["chips"])
 
 
 class ClampHoleTest(unittest.TestCase):

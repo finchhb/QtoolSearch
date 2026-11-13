@@ -47,6 +47,13 @@ class EffectiveQueryTest(unittest.TestCase):
         q = "хвостовик 20 мм"
         self.assertEqual(app.effective_query(self.sid, q), q)
 
+    def test_jaw_query_does_not_inherit_previous_filter(self):
+        # «кулачки каленые к11 шаг 5» повторяло выдачу держателей осевого инструмента
+        app.SESSIONS.put(self.sid, last_q="держатель осевого инструмента под хвостовик 32",
+                         decision="site_search")
+        q = "кулачки каленые к11 шаг 5"
+        self.assertEqual(app.effective_query(self.sid, q), q)
+
 
 if __name__ == "__main__":
     unittest.main()
