@@ -3,6 +3,7 @@ import unittest
 
 from src.catalog_search import (
     CatalogSearchEngine,
+    Query,
     clamp_accepts_hole,
     holder_insert_compat,
     insert_compat_key,
@@ -270,6 +271,27 @@ class CatalogSearchTest(unittest.TestCase):
         res = self.engine.search("купить")
         self.assertEqual(res["products"], [])
         self.assertTrue(res["follow_ups"])
+
+
+class HolderCodeParsingTest(unittest.TestCase):
+    """Пятибуквенный код державки не должен распознаваться как код пластины."""
+
+    def test_five_letter_holder_code_is_not_insert(self):
+        q = Query("mtjnr2525")
+        self.assertEqual(q.family, "holder")
+        self.assertEqual(q.holder_code, "MTJNR2525")
+        self.assertIsNone(q.insert_code)
+
+    def test_spaced_holder_code_keeps_insert_size_out_of_thread(self):
+        q = Query("MTJNR 2525 M16")
+        self.assertEqual(q.family, "holder")
+        self.assertEqual(q.holder_code, "MTJNR2525M16")
+        self.assertIsNone(q.thread)
+
+    def test_insert_code_is_still_insert(self):
+        q = Query("CNMG 12 04 08")
+        self.assertEqual(q.family, "insert")
+        self.assertEqual(q.insert_code, "CNMG120408")
 
 
 class ClampHoleTest(unittest.TestCase):

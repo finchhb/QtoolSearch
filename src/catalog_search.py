@@ -126,7 +126,8 @@ def insert_code_from_text(text: str) -> Optional[str]:
     toks = re.findall(r"[A-Z0-9]+", _fix_digit_letters(src))
     for i, tok in enumerate(toks):
         if re.fullmatch(r"[A-Z]{2,5}\d{4,6}[A-Z]{0,4}", tok):
-            if tok[0] in _INSERT_SHAPES:
+            # MTJNR2525 пишется как 5 букв + 4 цифры, но это код державки, а не пластины.
+            if tok[0] in _INSERT_SHAPES and not parse_holder_code(tok):
                 return tok
             continue
         if re.fullmatch(r"[A-Z]{2,5}", tok):
@@ -138,7 +139,9 @@ def insert_code_from_text(text: str) -> Optional[str]:
                 digits += toks[j]
                 j += 1
             if 4 <= len(digits) <= 6:
-                return tok + digits
+                code = tok + digits
+                if not parse_holder_code(code):
+                    return code
     return None
 
 
@@ -348,7 +351,8 @@ class Query:
             self.brand = b.group(1)
 
         common = extract_common(low)
-        thread = extract_thread(self.text)
+        # В коде державки «M16» - размер пластины, а не метрическая резьба.
+        thread = None if self.family == "holder" else extract_thread(self.text)
         if thread:
             self.thread = thread.get("thread")
             for key in ("pitch_mm", "diameter_mm", "thread_type", "tap_kind"):
