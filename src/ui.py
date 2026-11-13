@@ -12,7 +12,7 @@ button{font:inherit;cursor:pointer}
 CHAT_HTML = r"""<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Подбор токарных пластин</title>
+<title>Подбор инструмента qtool.ru</title>
 <style>__BASE_CSS__
 header{padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}
 header b{font-size:17px}header small{color:var(--muted)}
@@ -40,14 +40,14 @@ form button.sec{background:transparent;color:var(--muted);border:1px solid var(-
 .train .hint{color:var(--muted);font-size:13px}.train .ok{color:var(--ok)}.train .sug label{display:inline-block;margin:4px 10px 0 0}
 .note{color:var(--muted);font-size:12.5px;max-width:860px;margin:0 auto;padding:0 2px}
 </style></head><body>
-<header><div><b>Подбор токарных пластин</b><br><small id="src">загрузка…</small></div><nav id="adm"><a href="/admin#sec-source">📚 Источник</a><a href="/admin#sec-train">🎓 Обучение</a><a href="/admin#sec-rules">📝 Правила</a><a href="/admin#sec-llm" id="llmlink">🤖 LLM</a></nav></header>
+<header><div><b>Подбор инструмента qtool.ru</b><br><small id="src">загрузка…</small></div><nav id="adm"><a href="/admin#sec-source">📚 Источник</a><a href="/admin#sec-train">🎓 Обучение</a><a href="/admin#sec-rules">📝 Правила</a><a href="/admin#sec-llm" id="llmlink">🤖 LLM</a></nav></header>
 <div id="msgs">
-  <div class="msg"><p>Опишите задачу: материал, вид обработки, форму или артикул пластины — подберу варианты из наличия.</p></div>
+  <div class="msg"><p>Опишите задачу или артикул: пластины, сверла, фрезы, метчики, державки, развертки — подберу из каталога qtool.ru.</p></div>
   <div id="chips"></div>
   <div class="note">Подбор справочный. Перед заказом сверьте характеристики и цену в карточке товара.</div>
 </div>
 <form id="f" autocomplete="off">
-  <textarea id="q" rows="2" maxlength="4000" style="resize:vertical;font:inherit" placeholder="Например: CNMG 120408 10 шт; WNMG 080408 5 шт. Можно несколько позиций — каждая с новой строки (Shift+Enter — перенос)" required></textarea>
+  <textarea id="q" rows="2" maxlength="4000" style="resize:vertical;font:inherit" placeholder="Например: CNMG 120408 10 шт; сверло 8,5 мм; фреза концевая 10 мм 3 зуба; метчик М10. Можно несколько позиций — каждая с новой строки (Shift+Enter — перенос)" required></textarea>
   <button type="button" class="sec" id="reset" title="Начать новый подбор">Сброс</button>
   <button type="submit" id="go">Найти</button>
 </form>
@@ -84,6 +84,7 @@ function md(text) {
 function add(cls, html) { const d = document.createElement("div"); d.className = "msg " + cls; d.innerHTML = html; $("msgs").appendChild(d); d.scrollIntoView({ block: "end", behavior: "smooth" }); return d; }
 
 function badge(d) {
+  if (d.decision === "site_search" || d.decision === "multi_position") return '<span class="badge">⚡ Детерминированный поиск по каталогу qtool.ru</span>';
   if (d.llm_status === "checked") return '<span class="badge ok">🔍 Проверено LLM-верификатором</span>';
   if (d.llm_status === "unavailable") return '<span class="badge">⚡ Внутренний парсер ISO 1832</span> <span class="badge warn">⚠️ Проверка LLM сейчас недоступна — проверьте параметры вручную</span><br>';
   return '<span class="badge">⚡ Внутренний парсер ISO 1832</span>';
@@ -151,7 +152,7 @@ async function ask(text) {
 $("f").onsubmit = e => { e.preventDefault(); const t = $("q").value.trim(); if (!t) return; $("q").value = ""; ask(t); };
 $("q").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("f").requestSubmit(); } });
 $("reset").onclick = async () => { try { await fetch(API + "/api/clear_chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sid }) }); } catch (e) {} document.querySelectorAll("#msgs .msg:not(:first-child)").forEach(x => x.remove()); };
-["Чистовое точение нержавейки 12Х18Н10Т", "Черновая обработка чугуна СЧ20 с коркой", "CNMG 120408 для стали 40Х", "Аналог SNMG 120408 Sandvik GC4325"].forEach(t => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.onclick = () => ask(t); $("chips").appendChild(b); });
+["CNMG 120408 для стали 40Х", "Сверло 8,5 мм по нержавейке", "Фреза концевая 10 мм 3 зуба", "Метчик М10", "Державка PCLNR 2525M12", "Аналог SNMG 120408 Sandvik GC4325"].forEach(t => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.onclick = () => ask(t); $("chips").appendChild(b); });
 fetch(API + "/api/status").then(r => r.json()).then(s => { $("src").textContent = "В наличии: " + s.in_stock + " поз. • обновлено " + (s.catalog_updated || "—"); if (s.local_admin) { LOCAL_ADMIN = true; $("adm").style.display = "flex"; $("llmlink").textContent = "🤖 LLM: " + (s.llm_on ? "вкл" : "выкл"); } }).catch(() => { $("src").textContent = ""; });
 </script></body></html>
 """.replace("__BASE_CSS__", BASE_CSS)

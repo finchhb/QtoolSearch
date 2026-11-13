@@ -1,0 +1,126 @@
+{
+ "built_at": "2026-11-13 09:45:34",
+ "total": 26930,
+ "prev_total": 26687,
+ "sources": [
+  {
+   "file": "price.xlsx",
+   "sha256": "855af1bbbf05b191c36d8d36317ee8ec7e101afaa9f009bea46105e180929894",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 12049,
+   "layouts": [
+    {
+     "layout": "price",
+     "rows": 12049,
+     "sheets": [
+      "Лист 1"
+     ]
+    }
+   ]
+  },
+  {
+   "file": "plates.xlsx",
+   "sha256": "74d530c2df07b8bb13349b4fea42b039e1107dc6866df6b278815b04a1747f30",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 16634,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 16634,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "d74957abd4c6"
+     }
+    }
+   ]
+  }
+ ],
+ "by_family": {
+  "insert": 18397,
+  "holder": 1299,
+  "drill": 2089,
+  "accessory": 2167,
+  "countersink": 40,
+  "mill": 1819,
+  "tap": 990,
+  "die": 32,
+  "reamer": 97
+ },
+ "by_category": {
+  "turning_insert": 16686,
+  "holder_external": 355,
+  "holder_internal": 275,
+  "holder_mini": 23,
+  "holder_grooving": 166,
+  "drill_holder": 10,
+  "holder_threading": 71,
+  "spare_part": 915,
+  "countersink": 6,
+  "measuring": 75,
+  "end_mill": 1109,
+  "deburring_blade": 34,
+  "machine_tap": 931,
+  "forming_tap": 36,
+  "pipe_tap": 23,
+  "mini_tool": 409,
+  "accessory": 372,
+  "adapter": 30,
+  "coolant": 96,
+  "grinding_wheel": 27,
+  "center": 27,
+  "tool_holder": 25,
+  "machine_jaw": 83,
+  "chuck": 96,
+  "collet": 333,
+  "machine_vice": 38,
+  "saw_blade": 3,
+  "threading_die": 32,
+  "machine_reamer": 39,
+  "hand_reamer": 58,
+  "hand_tool": 15,
+  "crown_drill": 71,
+  "hss_drill": 252,
+  "drill_head": 153,
+  "drill_body": 48,
+  "indexable_drill_body": 1158,
+  "center_drill": 81,
+  "solid_carbide_drill": 316,
+  "machine": 35,
+  "grooving_insert": 596,
+  "milling_insert": 503,
+  "drill_insert": 147,
+  "threading_insert": 465,
+  "slot_mill": 253,
+  "radius_mill": 214,
+  "ball_mill": 135,
+  "face_mill": 105
+ },
+ "unknown_sections": [],
+ "warnings": [],
+ "downloads": [
+  {
+   "url": "https://qtool.ru/downloads/price.xlsx",
+   "file": "data\\uploads\\price.xlsx",
+   "status": "ok",
+   "bytes": 1096050,
+   "sha256": "855af1bbbf05b191c36d8d36317ee8ec7e101afaa9f009bea46105e180929894",
+   "etag": "",
+   "last_modified": ""
+  },
+  {
+   "url": "https://qtool.ru/upload/V/smennie_plastini_ISO_tochenie_03.11.26.xlsx",
+   "file": "data\\uploads\\plates.xlsx",
+   "status": "ok",
+   "bytes": 3467990,
+   "sha256": "74d530c2df07b8bb13349b4fea42b039e1107dc6866df6b278815b04a1747f30",
+   "etag": "\"6ae97bed-34ead6\"",
+   "last_modified": "Tue, 03 Nov 2026 06:15:09 GMT"
+  }
+ ]
+}

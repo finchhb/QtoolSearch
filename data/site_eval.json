@@ -1,0 +1,99 @@
+[
+  {
+    "query": "CNMG 120408",
+    "family": "insert",
+    "level": "точное",
+    "insert_code": "CNMG120408",
+    "total_min": 1,
+    "must_include": "CNMG 120408"
+  },
+  {
+    "query": "снмг 1204O8",
+    "family": "insert",
+    "insert_code": "CNMG120408",
+    "must_include": "CNMG 120408"
+  },
+  {
+    "query": "CNMG120408",
+    "family": "insert",
+    "insert_code": "CNMG120408",
+    "must_include": "CNMG 120408"
+  },
+  {
+    "query": "СТМН 120408",
+    "family": "insert",
+    "insert_code": "CNMG120408",
+    "must_include": "CNMG 120408"
+  },
+  {
+    "query": "сверло 8,5 мм",
+    "family": "drill",
+    "attrs": {"diameter_mm": 8.5},
+    "chips_include": ["диаметр: 8,5 мм"],
+    "must_include": "8.5"
+  },
+  {
+    "query": "сверло под резьбу М10",
+    "family": "drill",
+    "attrs": {"diameter_mm": 8.5},
+    "tap_drill": {"thread": "M10", "drill_mm": 8.5},
+    "must_include": "8.5"
+  },
+  {
+    "query": "фреза концевая 10 мм 3 зуба",
+    "family": "mill",
+    "attrs": {"diameter_mm": 10, "teeth": 3},
+    "chips_include": ["зубьев: 3"],
+    "must_include": "3F"
+  },
+  {
+    "query": "метчик М10",
+    "family": "tap",
+    "chips_include": ["резьба: M10"],
+    "must_include": "М10х1.5"
+  },
+  {
+    "query": "державка CKJNL2525M16",
+    "family": "holder",
+    "holder_code": "CKJNL2525M16",
+    "must_include": "CKJNL2525M16"
+  },
+  {
+    "query": "цанга ER32 12",
+    "family": "accessory",
+    "attrs": {"collet_series": "ER32", "clamp_mm": 12},
+    "must_include": "ER32-12"
+  },
+  {
+    "query": "зенкер 20 90",
+    "family": "countersink",
+    "attrs": {"diameter_mm": 20},
+    "must_include": "20х90"
+  },
+  {
+    "query": "развертка 10 H7",
+    "family": "reamer",
+    "level": "аналог",
+    "attrs": {"diameter_mm": 10}
+  },
+  {
+    "query": "пластина для нержавейки чистовая",
+    "family": "insert",
+    "attrs": {"iso_group": "M", "operation": "finishing"},
+    "chips_include": ["группа ISO: M", "обработка: чистовая"]
+  },
+  {
+    "query": "фреза BAP 400R 63-22-4T",
+    "family": "mill",
+    "attrs": {"diameter_mm": 63, "teeth": 4},
+    "must_include": "BAP 400R 63-22-4T"
+  },
+  {
+    "query": "8,5",
+    "total_max": 0
+  },
+  {
+    "query": "купить",
+    "total_max": 0
+  }
+]

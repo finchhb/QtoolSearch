@@ -1,0 +1,1021 @@
+"""
+src/catalog_search.py - детерминированный поиск по каталогу всех групп qtool.ru (без LLM).
+
+Слои:
+1. Нормализация запроса: регистр, омоглифы (кириллица/латиница), неверная раскладка,
+   разделители 25x25 / 25х25 / 25×25, десятичная запятая.
+2. Разбор намерения: группа товара, код, диаметр, резьба, зубья, хвостовик, покрытие,
+   материал, стандарт, радиус, ширина, угол.
+3. Подбор: лесенка «точный код -> компактный код -> префикс -> атрибуты -> текст»,
+   жёсткие и мягкие фильтры, явная лесенка ослаблений, ближайшие диаметры.
+4. Ранжирование: уровень совпадения, наличие, цена, бренд, число совпавших атрибутов.
+"""
+import math
+import re
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from src import rates
+from src.site_catalog import _RE_DIA, _RE_MM, _RE_TRIPLE, _dims, extract_common, extract_teeth, extract_thread
+
+# --------------------------------------------------------------------------------------------------
+# Нормализация
+# --------------------------------------------------------------------------------------------------
+_RU_TO_EN = {
+    "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t", "н": "y", "г": "u", "ш": "i", "щ": "o", "з": "p",
+    "х": "[", "ъ": "]", "ф": "a", "ы": "s", "в": "d", "а": "f", "п": "g", "р": "h", "о": "j", "л": "k",
+    "д": "l", "ж": ";", "э": "'", "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m",
+    "б": ",", "ю": ".",
+}
+_HOMOGLYPHS = {
+    "а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
+    "у": "y", "х": "x", "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P",
+    "С": "C", "Т": "T", "У": "Y", "Х": "X",
+}
+
+_RU_CODE_LETTERS = {
+    "а": "a", "в": "v", "г": "g", "д": "d", "е": "e", "ж": "zh", "з": "z", "и": "i", "й": "j",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "c", "т": "t",
+    "у": "y", "ф": "f", "х": "x", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y",
+    "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+_WORD_RE = re.compile(r"[a-zа-я0-9]+(?:[.,/][a-zа-я0-9]+)*")
+
+# Материал обработки -> группа ISO (порядок важен: «жаропрочная сталь» — это S, «12Х18Н10Т» — M)
+_MATERIAL_ISO = [
+    (r"титан|жаропроч|инконель|inconel|хастеллой|нимоник", "S"),
+    (r"нержав|12х18|08х18|10х17|14х17|20х13|40х13|aisi\s?3\d\d|aisi\s?4\d\d", "M"),
+    (r"чугун|вч\d|сч\d|кч\d", "K"),
+    (r"алюмин|дюрал|латун|бронз|мед[ьи]|цинк", "N"),
+    (r"закал|цемент|hrc\s?\d|твердост", "H"),
+    (r"стал[ьи]|конструкцион|углеродист|40х|45х|20х|30х|18хгт|40хн", "P"),
+]
+_OP_RX = [(r"получистов", "semi_finishing"), (r"чистов", "finishing"), (r"чернов", "roughing")]
+
+
+def material_iso(text: str) -> Optional[str]:
+    low = (text or "").lower().replace("ё", "е")
+    for pattern, iso in _MATERIAL_ISO:
+        if re.search(pattern, low):
+            return iso
+    return None
+
+
+def operation_from_text(text: str) -> Optional[str]:
+    low = (text or "").lower().replace("ё", "е")
+    for pattern, op in _OP_RX:
+        if re.search(pattern, low):
+            return op
+    return None
+
+
+def compact(s: str) -> str:
+    return re.sub(r"[^a-z0-9а-я]", "", (s or "").lower())
+
+
+def fmt_num(value: Any) -> str:
+    """Число для показа: 8.5 -> «8,5», 90.0 -> «90»."""
+    if isinstance(value, float):
+        return f"{value:g}".replace(".", ",")
+    return str(value)
+
+
+def layout_to_latin(s: str) -> str:
+    return "".join(_RU_TO_EN.get(ch, ch) for ch in s.lower())
+
+
+def homoglyph_latin(s: str) -> str:
+    return "".join(_HOMOGLYPHS.get(ch, ch) for ch in s)
+
+
+def cyrillic_code_letters(s: str) -> str:
+    return "".join(_RU_CODE_LETTERS.get(ch, ch) for ch in s)
+
+
+def query_variants(q: str) -> List[str]:
+    """Варианты написания кода: как есть, омоглифы, неверная раскладка, кириллица по буквам кода."""
+    base = (q or "").lower().replace("ё", "е")
+    out = [base, homoglyph_latin(base), cyrillic_code_letters(base), layout_to_latin(base)]
+    seen, uniq = set(), []
+    for v in out:
+        if v not in seen:
+            seen.add(v)
+            uniq.append(v)
+    return uniq
+
+
+def tokenize(text: str) -> List[str]:
+    return _WORD_RE.findall((text or "").lower().replace("ё", "е"))
+
+
+def _fix_digit_letters(s: str) -> str:
+    s = re.sub(r"(?<=\d)[OОQ](?=\d)", "0", s)
+    return re.sub(r"(?<=\d)[lI|](?=\d)", "1", s)
+
+
+_HOLDER_PREFIXES = {
+    "PCLN", "MCLN", "PWLN", "MWLN", "PTGN", "MTGN", "PDJN", "MDJN", "MVJN", "PVJN",
+    "PSSN", "MSSN", "SCLC", "SDJC", "STGC", "SVJB", "SVJC", "SDUC", "SCLC",
+}
+_INSERT_SHAPES = set("ABCDEHKLMOPRSTVW")
+
+
+def insert_code_from_text(text: str) -> Optional[str]:
+    """CNMG 12 04 08 / CNMG120408 -> CNMG120408. Хвост из букв (стружколом) не приклеиваем."""
+    src = cyrillic_code_letters((text or "").lower().replace("ё", "е")).upper()
+    toks = re.findall(r"[A-Z0-9]+", _fix_digit_letters(src))
+    for i, tok in enumerate(toks):
+        if re.fullmatch(r"[A-Z]{2,5}\d{4,6}[A-Z]{0,4}", tok):
+            if tok[0] in _INSERT_SHAPES:
+                return tok
+            continue
+        if re.fullmatch(r"[A-Z]{2,5}", tok):
+            if tok[0] not in _INSERT_SHAPES or tok[:4] in _HOLDER_PREFIXES:
+                continue  # не пластина (оснастка или транслитерированное слово)
+            digits = ""
+            j = i + 1
+            while j < len(toks) and re.fullmatch(r"\d{1,6}", toks[j]) and len(digits) < 6:
+                digits += toks[j]
+                j += 1
+            if 4 <= len(digits) <= 6:
+                return tok + digits
+    return None
+
+
+def holder_code_from_text(text: str) -> Optional[str]:
+    """PCLNR 2525 M12 / SNR0006K06-A12 -> компактный код с сохранением дефиса.
+
+    Берём только токены, которые целиком состоят из латиницы (омоглифы допускаются):
+    «державка» после транслитерации иначе приклеивалась бы к коду.
+    """
+    toks = re.findall(r"[A-Za-zА-Яа-яЁё0-9-]+", text or "")
+    for i, tok in enumerate(toks):
+        letters = homoglyph_latin(tok)
+        if any(ch.isalpha() and not ("A" <= ch.upper() <= "Z") for ch in letters):
+            continue
+        cand = letters.upper()
+        if re.fullmatch(r"[A-Z]{1,6}\d{2,5}[A-Z]?\d{0,4}(?:-[A-Z0-9]{1,10})?", cand):
+            return cand
+        if re.fullmatch(r"[A-Z]{1,6}", cand):
+            digits = ""
+            j = i + 1
+            while j < len(toks) and len(digits) < 8:
+                nxt = homoglyph_latin(toks[j]).upper()
+                if re.fullmatch(r"\d{1,4}|[A-Z]\d{1,3}|\d{2,5}[A-Z]\d{1,3}", nxt):
+                    digits += nxt
+                    j += 1
+                else:
+                    break
+            if re.fullmatch(r"\d{2,5}[A-Z]?\d{0,4}", digits):
+                return cand + digits
+    return None
+
+
+def damerau(a: str, b: str, max_dist: int = 1) -> int:
+    """Расстояние Дамерау-Левенштейна с ранним выходом (строки короткие)."""
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if abs(la - lb) > max_dist:
+        return max_dist + 1
+    prev2: List[int] = []
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        best = cur[0]
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+            best = min(best, cur[j])
+        if best > max_dist:
+            return max_dist + 1
+        prev2, prev = prev, cur
+    return prev[lb]
+
+
+# --------------------------------------------------------------------------------------------------
+# Намерение запроса
+# --------------------------------------------------------------------------------------------------
+FAMILY_KEYWORDS = [
+    ("insert", r"пластин|insert|cnmg|wnmg|tcmt|tcgt|ccmt|ccgt|dcmt|vcgt|apmt|apkt|wcmt|spmg|sekt|lnmu|16er|16ir|22er|22ir|mgmn|mrgn|8gr|6gr|3gr|zqmx"),
+    ("drill", r"сверл|сверло|drill|коронк|центровк"),
+    ("mill", r"фрез|mill|борфрез"),
+    ("tap", r"метчик|\btap\b|раскатник"),
+    ("die", r"плашк|\bdies?\b"),
+    ("reamer", r"разверт"),
+    ("countersink", r"зенков|зенкер|фаскосним|гратосним"),
+    ("holder", r"державк|борштанг|holder|резец|резц|минирез|оправк|расточн"),
+    ("accessory", r"цанг|патрон|винт|гайк|ключ|сож|тиск|кулачк|адаптер|переходник|втулк"),
+    ("measuring", r"штанген|микрометр|нутромер|линейк|угломер|индикатор|рулетк"),
+    ("saw", r"пил[аы]|пильн|дисков.*пил"),
+]
+
+CATEGORY_HINTS = {
+    "drill": [
+        ("center_drill", r"центровоч|центровк"),
+        ("crown_drill", r"корончат"),
+        ("drill_head", r"головк"),
+        ("drill_body", r"корпус.*головк|под головк"),
+        ("indexable_drill_body", r"корпусн|сменн.*пластин|под пластину"),
+        ("solid_carbide_drill", r"твердосплав|vhm"),
+        ("hss_drill", r"hss|р6м5|p6m5|к/х"),
+    ],
+    "mill": [
+        ("ball_mill", r"сферич|шарова|ball"),
+        ("radius_mill", r"радиусн|с радиусом"),
+        ("thread_mill", r"резьбофрез"),
+        ("face_mill", r"торцев|насадн|со сменными пластин|корпусн"),
+        ("slot_mill", r"дисков|пазов|т-образн|отрезн"),
+        ("burr", r"борфрез"),
+        ("end_mill", r"концев|end"),
+    ],
+    "tap": [
+        ("forming_tap", r"раскатн"),
+        ("pipe_tap", r"трубн|\bG\d"),
+        ("machine_tap", r"машинн|метрич|сквозн|гаечн"),
+    ],
+}
+
+
+class Query:
+    def __init__(self, text: str):
+        self.text = (text or "").strip()
+        self.low = self.text.lower().replace("ё", "е")
+        self.variants = query_variants(self.text)
+        self.compact = compact(self.text)
+        self.family: Optional[str] = None
+        self.category_hints: List[str] = []
+        self.attrs: Dict[str, Any] = {}
+        self.code: Optional[str] = None
+        self.insert_code: Optional[str] = None
+        self.holder_code: Optional[str] = None
+        self.thread: Optional[str] = None
+        self.brand: Optional[str] = None
+        self.free_tokens: List[str] = []
+        self._parse()
+
+    def _parse(self) -> None:
+        low = self.low
+        for fam, pattern in FAMILY_KEYWORDS:
+            if re.search(pattern, low):
+                self.family = fam
+                break
+        for cat, pattern in CATEGORY_HINTS.get(self.family or "", []):
+            if re.search(pattern, low):
+                self.category_hints.append(cat)
+
+        # коды: пробелы в записи кода не значимы (CNMG 12 04 08 = CNMG120408)
+        if self.family in (None, "insert"):
+            for v in self.variants:
+                code = insert_code_from_text(v)
+                if code:
+                    self.insert_code = code
+                    self.family = "insert"
+                    break
+        if self.family in (None, "holder"):
+            for v in self.variants:
+                code = holder_code_from_text(v)
+                if code:
+                    self.holder_code = code
+                    if self.family is None:
+                        self.family = "holder"
+                    break
+
+        if self.family == "insert":
+            up = self.text.upper().replace("Ё", "Е")
+            g = re.search(r"(?<![\w.])(\d{4}|[A-Z]{1,3}\d{3,4})(?![\w.])", up)
+            if g and not (self.insert_code and g.group(1) in self.insert_code):
+                self.attrs["grade"] = g.group(1)
+            iso_g = re.search(r"(?<![\w.])([PMKNSH])\s?(\d{1,2})(?![\w.])", up)
+            if iso_g:
+                self.attrs["iso_group"] = iso_g.group(1)
+            if "iso_group" not in self.attrs:
+                mi = material_iso(low)
+                if mi:
+                    self.attrs["iso_group"] = mi
+            op = operation_from_text(low)
+            if op:
+                self.attrs["operation"] = op
+
+        b = re.search(r"(?:бренд|марка|производител[ья])\s*[:—-]?\s*([a-zа-я0-9-]{2,20})", low)
+        if b:
+            self.brand = b.group(1)
+
+        common = extract_common(low)
+        thread = extract_thread(self.text)
+        if thread:
+            self.thread = thread.get("thread")
+            for key in ("pitch_mm", "diameter_mm", "thread_type", "tap_kind"):
+                if thread.get(key) is not None:
+                    self.attrs[key] = thread[key]
+        self.attrs.update({k: v for k, v in common.items() if k not in self.attrs and k != "grade"})
+
+        teeth = extract_teeth(self.text)
+        if teeth is None:
+            m = re.search(r"(?<![\w.])(\d{1,2})\s*T(?![A-Za-zА-Яа-я0-9])", self.text)
+            if not m:
+                m = re.search(r"(?<![\w.])(\d{1,2})\s*Z(?![A-Za-zА-Яа-я0-9])", self.text, re.I)
+            if m and 0 < int(m.group(1)) <= 40:
+                teeth = int(m.group(1))
+        if teeth:
+            self.attrs["teeth"] = teeth
+
+        # насадные/торцевые фрезы: «BAP 400R 63-22-4T» — диаметр 63, посадка 22, 4 зуба
+        fm = re.search(r"(?<![\w.])(\d{2,3})\s*-\s*(\d{1,3})\s*-\s*(\d{1,2})\s*T(?![A-Za-zА-Яа-я])", self.text, re.I)
+        if fm and self.family == "mill":
+            self.attrs["diameter_mm"] = float(fm.group(1))
+            self.attrs["bore_mm"] = float(fm.group(2))
+            self.attrs["teeth"] = int(fm.group(3))
+            self.attrs.pop("radius_mm", None)
+
+        dia = _RE_DIA.search(self.text)
+        if dia:
+            self.attrs["diameter_mm"] = float(dia.group(1).replace(",", "."))
+        elif self.family in ("drill", "mill", "reamer", "countersink", "saw"):
+            mm = _RE_MM.search(self.text)
+            dims = _dims(self.text)
+            if mm:
+                self.attrs["diameter_mm"] = float(mm.group(1).replace(",", "."))
+            elif dims:
+                self.attrs["diameter_mm"] = dims[0]
+
+        if self.family in ("drill", "mill") and "диаметр" in low:
+            m = re.search(r"(\d+(?:[.,]\d+)?)", low.split("диаметр", 1)[1])
+            if m:
+                self.attrs["diameter_mm"] = float(m.group(1).replace(",", "."))
+
+        if "diameter_mm" not in self.attrs and self.family in ("drill", "mill", "reamer", "countersink", "saw"):
+            teeth = self.attrs.get("teeth")
+            nominal = self.attrs.get("diameter_mm") if self.attrs.get("thread_type") else None
+            for m in re.finditer(r"(?<![A-Za-zА-Яа-я0-9.])(\d+(?:[.,]\d+)?)(?![A-Za-zА-Яа-я0-9.,])", self.text):
+                val = float(m.group(1).replace(",", "."))
+                if not (0.3 <= val <= 500):
+                    continue
+                if teeth and val == teeth:
+                    continue
+                if nominal and abs(val - float(nominal)) < 1e-9:
+                    continue
+                self.attrs["diameter_mm"] = val
+                break
+
+        if self.family == "drill" and self.thread and re.search(r"под\s+(резьб|метчик)", low):
+            td = tap_drill_for(self.thread)
+            if td:
+                self.attrs["diameter_mm"] = td["drill_mm"]
+                self.attrs["tap_drill_for"] = self.thread
+
+        if self.family in ("drill", "mill"):
+            ld = re.search(r"(?<![A-Za-z0-9])(\d{1,2})\s*[Dd](?![A-Za-z0-9])", self.text)
+            if ld and 1 <= int(ld.group(1)) <= 30:
+                self.attrs["ld_ratio"] = int(ld.group(1))
+            ang = re.search(r"(?<!\d)(\d{2,3})\s*(?:°|град)", self.text)
+            if ang and 45 <= int(ang.group(1)) <= 180:
+                self.attrs["angle_deg"] = float(ang.group(1))
+
+        r = re.search(r"(?<![A-Za-zА-Яа-я0-9])R\s*(\d+(?:[.,]\d+)?)", self.text, re.I)
+        if r:
+            self.attrs["radius_mm"] = float(r.group(1).replace(",", "."))
+
+        m = re.search(r"хв\.?\s*(\d+(?:[.,]\d+)?)", low)
+        if m:
+            self.attrs["shank_mm"] = float(m.group(1).replace(",", "."))
+
+        dims = _dims(self.text)
+        if dims and self.family == "holder" and "shank_mm" not in self.attrs:
+            self.attrs["shank_mm"] = dims[0]
+
+        m = re.search(r"(?:h8|h7|h9|h6)\b", low)
+        if m and self.family == "reamer":
+            self.attrs["tolerance"] = m.group(0).upper()
+
+        m = re.search(r"(?:er|er-)\s?(\d{1,2})", low)
+        if m and self.family == "accessory":
+            self.attrs["collet_series"] = f"ER{m.group(1)}"
+            clamp = re.search(r"(?:er-?\d{1,2})\D{0,4}(\d{1,2}(?:[.,]\d)?)\s*(?:мм)?\b", low)
+            if clamp:
+                self.attrs["clamp_mm"] = float(clamp.group(1).replace(",", "."))
+
+        if self.family == "mill" and ("дисков" in low or "пазов" in low or "отрезн" in low):
+            dims = _dims(self.text)
+            if len(dims) >= 2 and dims[1] <= 20:
+                self.attrs["thickness_mm"] = dims[1]
+
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:мм)?\s*(?:диаметр|ø|⌀)", low)
+        if m and "diameter_mm" not in self.attrs and self.family in ("drill", "mill", "reamer"):
+            self.attrs["diameter_mm"] = float(m.group(1).replace(",", "."))
+
+        stop = {
+            "пластина", "пластины", "для", "под", "точения", "обработки", "нужна", "нужен", "подбери",
+            "посоветуй", "какой", "какая", "купить", "есть", "в", "наличии", "на", "складе", "мне",
+            "надо", "хочу", "сверло", "сверла", "фреза", "фрезы", "метчик", "метчика", "державка",
+            "державки", "мм", "шт", "цена", "стоимость", "сколько", "стоит", "с", "и", "или",
+        }
+        self.free_tokens = [t for t in tokenize(self.text) if t not in stop and len(t) > 1 and not re.fullmatch(r"\d+[.,]?\d*", t)]
+
+
+# --------------------------------------------------------------------------------------------------
+# Совместимость и подсверловка
+# --------------------------------------------------------------------------------------------------
+TAP_DRILL = {
+    "M1": 0.75, "M1.2": 0.95, "M1.6": 1.25, "M2": 1.6, "M2.5": 2.05, "M3": 2.5, "M4": 3.3,
+    "M5": 4.2, "M6": 5.0, "M8": 6.8, "M10": 8.5, "M12": 10.2, "M14": 12.0, "M16": 14.0,
+    "M18": 15.5, "M20": 17.5, "M22": 19.5, "M24": 21.0, "M27": 24.0, "M30": 26.5,
+}
+
+HOLDER_SHAPE = {"C": "C", "D": "D", "V": "V", "W": "W", "T": "T", "S": "S", "R": "R", "K": "K"}
+INSERT_LETTER = {"C": "CNMG/CCMT", "D": "DNMG/DCMT", "V": "VNMG/VCMT", "W": "WNMG/WCMT", "T": "TNMG/TCMT", "S": "SNMG/SCMT", "R": "RNMG/RCMT"}
+
+
+def tap_drill_for(thread: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not thread:
+        return None
+    m = re.match(r"M(\d+(?:\.\d+)?)(?:x(\d+(?:\.\d+)?))?", thread.upper())
+    if not m:
+        return None
+    d = float(m.group(1))
+    p = float(m.group(2)) if m.group(2) else None
+    std = TAP_DRILL.get(f"M{int(d)}" if d == int(d) else f"M{d}")
+    dia = round(d - p, 2) if p else std
+    if dia is None:
+        return None
+    return {"thread": thread, "drill_mm": dia, "nominal_mm": d, "pitch_mm": p}
+
+
+def holder_insert_hint(code: Optional[str]) -> Optional[str]:
+    if not code:
+        return None
+    m = re.match(r"^[A-Z]([A-Z])([A-Z])[A-Z](\d{2})", code)
+    if not m:
+        return None
+    shape = m.group(2)
+    return f"{INSERT_LETTER.get(shape, shape)} {m.group(3)}xxxx"
+
+
+# --------------------------------------------------------------------------------------------------
+# Поисковый движок
+# --------------------------------------------------------------------------------------------------
+class CatalogSearchEngine:
+    def __init__(self, items: Optional[List[Dict[str, Any]]] = None):
+        self.items: List[Dict[str, Any]] = []
+        self.by_family: Dict[str, List[Dict[str, Any]]] = {}
+        self.df: Dict[str, int] = {}
+        self.total = 0
+        self._vocab: set = set()
+        self._vocab_by_len: Dict[int, List[str]] = {}
+        self._corr_cache: Dict[str, Optional[str]] = {}
+        self._insert_prefixes: Dict[str, int] = {}
+        if items:
+            self.load(items)
+
+    # ---- загрузка и индексы ----------------------------------------------------------------------
+    def load(self, items: Sequence[Dict[str, Any]]) -> None:
+        self.items = [it for it in items if it.get("family") and it.get("family") != "other"]
+        self.by_family = {}
+        doc_tokens: List[set] = []
+        df: Dict[str, int] = {}
+        vocab = set()
+        prefixes: Dict[str, int] = {}
+        for it in self.items:
+            attrs = it.get("attrs") or {}
+            iso = str(attrs.get("iso_code") or "").strip().upper()
+            if len(iso) >= 4:
+                prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
+            text = " ".join(str(x) for x in (
+                it.get("sku"), it.get("name"), it.get("brand"), it.get("category"),
+                attrs.get("iso_code"), attrs.get("holder_code"), attrs.get("grade"),
+                attrs.get("thread"), attrs.get("coating"), attrs.get("standard"),
+            ) if x)
+            toks = set(tokenize(text))
+            it["_tokens"] = toks
+            it["_compact"] = compact(f"{it.get('sku')} {it.get('name')}")
+            code_src = " ".join(str(x) for x in (it.get("sku"), attrs.get("iso_code"), attrs.get("holder_code")) if x)
+            it["_code_compact"] = compact(code_src)
+            it["_brand_norm"] = compact(it.get("brand", ""))
+            doc_tokens.append(toks)
+            for t in toks:
+                df[t] = df.get(t, 0) + 1
+                if len(t) >= 4 and any(ch.isdigit() for ch in t):
+                    vocab.add(t)
+            self.by_family.setdefault(it["family"], []).append(it)
+        self.df = df
+        self.total = len(self.items)
+        self._vocab = vocab
+        self._insert_prefixes = prefixes
+        by_len: Dict[int, List[str]] = {}
+        for token in vocab:
+            by_len.setdefault(len(token), []).append(token)
+        self._vocab_by_len = by_len
+        self._corr_cache = {}
+
+    def reload(self, path: Optional[str] = None) -> int:
+        from src.site_catalog import load_site_catalog
+        self.load(load_site_catalog(path) if path else load_site_catalog())
+        return self.total
+
+    # ---- утилиты ---------------------------------------------------------------------------------
+    def _idf(self, tok: str) -> float:
+        df = self.df.get(tok, 0)
+        return math.log((self.total - df + 0.5) / (df + 0.5) + 1.0) if self.total else 0.0
+
+    def _text_score(self, it: Dict[str, Any], tokens: Sequence[str]) -> float:
+        if not tokens:
+            return 0.0
+        doc = it.get("_tokens") or set()
+        score = 0.0
+        for t in tokens:
+            if t in doc:
+                score += self._idf(t)
+            elif len(t) >= 5 and any(ch.isdigit() for ch in t):
+                fixed = self._correct(t)
+                if fixed and fixed in doc:
+                    score += self._idf(fixed) * 0.6
+        return score
+
+    def _correct(self, tok: str) -> Optional[str]:
+        if tok in self._corr_cache:
+            return self._corr_cache[tok]
+        result = None
+        if tok in self._vocab:
+            result = tok
+        elif len(tok) >= 5:
+            for length in (len(tok) - 1, len(tok), len(tok) + 1):
+                for cand in self._vocab_by_len.get(length, ()):
+                    if damerau(tok, cand) <= 1:
+                        result = cand
+                        break
+                if result:
+                    break
+        self._corr_cache[tok] = result
+        return result
+
+    def _canonical_insert_code(self, code: str) -> str:
+        """Опечатка/раскладка в префиксе кода: «СТМН 120408» -> CTMN -> CNMG.
+
+        Префикс заменяется, только если его нет в каталоге, а похожий (Дамерау <= 2,
+        та же форма) есть. Реальные коды каталога не трогаем.
+        """
+        if not code or len(code) < 4:
+            return code
+        pref = code[:4].upper()
+        if pref in self._insert_prefixes:
+            return code
+        cands = []
+        for known, cnt in self._insert_prefixes.items():
+            if known[0] != pref[0]:
+                continue
+            dist = damerau(pref, known, 2)
+            if dist <= 2:
+                cands.append((dist, -cnt, known))
+        if not cands:
+            return code
+        cands.sort()
+        return cands[0][2] + code[4:]
+
+    @staticmethod
+    def _code_match(item: Dict[str, Any], code: str) -> Tuple[int, str]:
+        """0 нет, 1 часть кода (запрос короче), 2 вхождение в артикул, 3 полный код."""
+        want = compact(code)
+        if not want:
+            return 0, ""
+        attrs = item.get("attrs") or {}
+        iso = compact(str(attrs.get("iso_code") or ""))
+        if iso and iso == want:
+            return 3, "код"
+        if compact(str(attrs.get("holder_code") or "")) == want:
+            return 3, "код"
+        sku = compact(str(item.get("sku") or ""))
+        if sku.startswith(want):
+            after = sku[len(want):len(want) + 1]
+            return (1, "часть кода") if after.isdigit() else (3, "код")
+        if iso and want in iso:
+            return 1, "часть кода"
+        have = item.get("_code_compact") or ""
+        if have and want in have:
+            return 2, "код"
+        return 0, ""
+
+    # ---- фильтры ---------------------------------------------------------------------------------
+    def _filters(self, q: Query, fam: str):
+        """[(имя, жёсткий, функция(item)->bool)] — порядок задаёт лесенку ослаблений."""
+        a = q.attrs
+        out = []
+        if fam == "insert":
+            if q.insert_code:
+                out.append(("код", True, lambda it: self._code_match(it, q.insert_code)[0] > 0))
+            if a.get("size_code"):
+                out.append(("размер", True, lambda it: str((it["attrs"] or {}).get("size_code") or "").zfill(2) == str(a["size_code"]).zfill(2)))
+            if a.get("diameter_mm") and not q.insert_code:
+                out.append(("диаметр", False, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.15)))
+            if a.get("pitch_mm"):
+                out.append(("шаг", False, lambda it: self._near(it["attrs"].get("pitch_mm"), a["pitch_mm"], 0.02)))
+            if a.get("radius_mm"):
+                out.append(("радиус", False, lambda it: self._near(it["attrs"].get("radius_mm"), a["radius_mm"], 0.05)))
+            if a.get("iso_group"):
+                out.append(("группа ISO", False, lambda it: (
+                    str((it["attrs"].get("iso_group") or "")).upper() == a["iso_group"].upper()
+                    or a["iso_group"].upper() in str(it["attrs"].get("secondary_iso") or "").upper()
+                )))
+            if a.get("operation"):
+                out.append(("вид обработки", False, lambda it: (it["attrs"].get("operation") or "") == a["operation"]))
+            if a.get("grade"):
+                want_grade = compact(str(a["grade"]))
+                out.append(("марка", False, lambda it: (
+                    compact(str(it["attrs"].get("grade") or "")) == want_grade
+                    or want_grade in compact(str(it.get("name") or ""))
+                )))
+        elif fam in ("drill", "mill", "reamer"):
+            if a.get("diameter_mm"):
+                tol = 0.06 if a["diameter_mm"] < 10 else 0.11
+                out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], tol)))
+            if a.get("teeth"):
+                out.append(("зубья", False, lambda it: self._int_eq(it["attrs"].get("teeth"), a["teeth"])))
+            if a.get("shank_mm"):
+                out.append(("хвостовик", False, lambda it: self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
+            if a.get("radius_mm") and fam == "mill":
+                out.append(("радиус", False, lambda it: self._near(it["attrs"].get("radius_mm"), a["radius_mm"], 0.05)))
+            if a.get("thickness_mm") and fam == "mill":
+                out.append(("толщина", False, lambda it: self._near(it["attrs"].get("thickness_mm"), a["thickness_mm"], 0.15)))
+            if a.get("ld_ratio") and fam == "drill":
+                out.append(("класс длины", False, lambda it: self._int_eq(it["attrs"].get("ld_ratio"), a["ld_ratio"])))
+            if a.get("angle_deg") and fam == "drill":
+                out.append(("угол при вершине", False, lambda it: self._near(it["attrs"].get("angle_deg"), a["angle_deg"], 1)))
+            if a.get("angle_deg") and fam in ("countersink",):
+                out.append(("угол", True, lambda it: self._near(it["attrs"].get("angle_deg"), a["angle_deg"], 1)))
+        elif fam in ("tap", "die"):
+            if q.thread:
+                out.append(("резьба", True, lambda it: self._thread_match(it["attrs"].get("thread"), q.thread, a.get("pitch_mm"))))
+            if a.get("tap_kind"):
+                out.append(("исполнение", False, lambda it: (it["attrs"].get("tap_kind") or "") == a["tap_kind"]))
+        elif fam == "holder":
+            if q.holder_code:
+                out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
+            if a.get("shank_mm"):
+                out.append(("хвостовик", True, lambda it: self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
+        elif fam == "countersink":
+            if a.get("diameter_mm"):
+                out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.2)))
+            if a.get("angle_deg"):
+                out.append(("угол", False, lambda it: self._near(it["attrs"].get("angle_deg"), a["angle_deg"], 1)))
+        elif fam == "saw":
+            if a.get("diameter_mm"):
+                out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.5)))
+            if a.get("teeth"):
+                out.append(("зубья", False, lambda it: self._int_eq(it["attrs"].get("teeth"), a["teeth"])))
+        elif fam == "accessory":
+            if a.get("collet_series"):
+                out.append(("серия", True, lambda it: (it["attrs"].get("collet_series") or "").upper() == a["collet_series"].upper()))
+            if a.get("clamp_mm"):
+                want = f"{a['clamp_mm']:g}"
+                out.append(("диаметр зажима", False, lambda it: (
+                    str(it["attrs"].get("clamp_range") or "").endswith("-" + want)
+                    or bool(re.search(rf"(?<![\d.]){re.escape(want)}(?:[.,]0)?\s*мм", str(it.get("name") or "")))
+                )))
+
+        if a.get("coating"):
+            out.append(("покрытие", False, lambda it: self._same_text(it["attrs"].get("coating"), a["coating"])))
+        if a.get("material"):
+            out.append(("материал", False, lambda it: self._same_text(it["attrs"].get("material"), a["material"])))
+        if a.get("standard"):
+            out.append(("стандарт", False, lambda it: compact(a["standard"]) in compact(str(it["attrs"].get("standard") or ""))))
+        if a.get("hrc"):
+            out.append(("HRC", False, lambda it: (it["attrs"].get("hrc") or 0) >= a["hrc"]))
+        if q.brand:
+            out.append(("бренд", False, lambda it: it.get("_brand_norm") == compact(q.brand)))
+        if q.category_hints:
+            out.append(("тип", True, lambda it: it.get("category") in q.category_hints))
+        return out
+
+    @staticmethod
+    def _int_eq(value: Any, want: Any) -> bool:
+        try:
+            return int(float(value)) == int(float(want))
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _near(value: Any, want: Any, tol: float) -> bool:
+        try:
+            return value is not None and abs(float(value) - float(want)) <= tol + 1e-9
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _same_text(value: Any, want: Any) -> bool:
+        if not value or not want:
+            return False
+        return compact(str(value)) == compact(str(want)) or compact(str(want)) in compact(str(value))
+
+    @staticmethod
+    def _thread_match(have: Any, want: str, pitch: Any) -> bool:
+        if not have:
+            return False
+        h = re.sub(r"\s+", "", str(have).upper().replace("М", "M").replace("Х", "X").replace("*", "X"))
+        w = re.sub(r"\s+", "", str(want).upper().replace("М", "M").replace("Х", "X").replace("*", "X"))
+        if h == w:
+            return True
+        mh = re.match(r"^M(\d+(?:\.\d+)?)", h)
+        mw = re.match(r"^M(\d+(?:\.\d+)?)", w)
+        if mh and mw and float(mh.group(1)) == float(mw.group(1)):
+            if pitch is None:
+                return True
+            hp = re.search(r"X(\d+(?:\.\d+)?)", h)
+            return hp is not None and abs(float(hp.group(1)) - float(pitch)) < 0.01
+        return compact(h) == compact(w)
+
+    # ---- основной поиск --------------------------------------------------------------------------
+    def search(self, text: str, limit: int = 8, in_stock_only: bool = True) -> Dict[str, Any]:
+        q = Query(text)
+        if q.insert_code:
+            q.insert_code = self._canonical_insert_code(q.insert_code)
+        if q.family is None:
+            return self._search_ambiguous(q, limit, in_stock_only)
+        return self._search_family(q, q.family, limit, in_stock_only)
+
+    def _search_ambiguous(self, q: Query, limit: int, in_stock_only: bool) -> Dict[str, Any]:
+        if not (q.free_tokens or q.insert_code or q.holder_code or q.attrs):
+            return {
+                "query": q.text, "family": None, "groups": [], "products": [],
+                "parsed": {}, "chips": [], "level": "уточните группу",
+                "total_found": 0, "relaxations": [],
+                "follow_ups": ["Укажите группу товара и параметры: например «сверло 8,5 мм» или «CNMG 120408»."],
+            }
+        groups = []
+        for fam in ("insert", "drill", "mill", "tap", "holder", "reamer", "countersink", "accessory"):
+            if not self.by_family.get(fam):
+                continue
+            res = self._search_family(q, fam, 3, in_stock_only)
+            if res["products"]:
+                groups.append({"family": fam, "title": FAMILY_TITLES.get(fam, fam), "products": res["products"],
+                               "total_found": res["total_found"], "level": res["level"]})
+        groups.sort(key=lambda g: -g["total_found"])
+        products = [p for g in groups for p in g["products"]][:limit]
+        return {
+            "query": q.text, "family": None, "groups": groups[:4], "products": products,
+            "parsed": q.attrs, "chips": self._chips(q, None), "level": "уточните группу",
+            "total_found": sum(g["total_found"] for g in groups[:4]), "relaxations": [],
+            "follow_ups": ["Уточните группу товара: пластина, сверло, фреза, метчик, державка."],
+            "note": "Запрос без явной группы — показаны лучшие совпадения по разным группам.",
+        }
+
+    def _search_family(self, q: Query, fam: str, limit: int, in_stock_only: bool) -> Dict[str, Any]:
+        pool = self.by_family.get(fam, [])
+        if not pool:
+            pool = self._related_pool(fam)
+        filters = self._filters(q, fam)
+        hard = [(n, f) for n, is_hard, f in filters if is_hard]
+        soft = [(n, f) for n, is_hard, f in filters if not is_hard]
+
+        relaxed: List[str] = []
+        availability = ""
+        results = self._collect(pool, q, hard, soft, in_stock_only, fam)
+        if not results and in_stock_only and filters:
+            # точное совпадение есть, но не в наличии — показываем под заказ, а не «похожее»
+            results = self._collect(pool, q, hard, soft, False, fam)
+            if results:
+                availability = "нет в наличии — показаны позиции под заказ"
+        if not results:
+            active_soft = list(soft)
+            active_hard = list(hard)
+            for _ in range(len(soft) + len(hard)):
+                if active_soft:
+                    name, _ = active_soft.pop()
+                    relaxed.append(f"ослаблен фильтр «{name}»")
+                elif active_hard and len(active_hard) > 1:
+                    name, _ = active_hard.pop()
+                    relaxed.append(f"ослаблен фильтр «{name}»")
+                else:
+                    break
+                results = self._collect(pool, q, active_hard, active_soft, in_stock_only, fam)
+                if not results and in_stock_only:
+                    results = self._collect(pool, q, active_hard, active_soft, False, fam)
+                    if results:
+                        availability = "нет в наличии — показаны позиции под заказ"
+                if results:
+                    break
+
+        code_level = 0
+        if q.insert_code or q.holder_code:
+            code_level = max((self._code_match(it, q.insert_code or q.holder_code or "")[0] for it, _ in results), default=0)
+        nearest = []
+        if not results and fam in ("drill", "mill", "reamer", "countersink", "saw") and q.attrs.get("diameter_mm"):
+            nearest = self._nearest_diameter(pool, q.attrs["diameter_mm"], fam, q, limit)
+            if nearest:
+                relaxed.append(f"точного диаметра нет — показаны ближайшие к {fmt_num(q.attrs['diameter_mm'])} мм")
+                results = nearest
+
+        level = "точное"
+        if nearest:
+            level = "аналог"
+        elif relaxed or 0 < code_level < 3:
+            level = "частичное"
+        if q.attrs.get("tap_drill_for"):
+            relaxed.append(f"под резьбу {q.attrs['tap_drill_for']} диаметр сверла {fmt_num(q.attrs.get('diameter_mm'))} мм")
+
+        products = [self._card(it, score, q) for it, score in results[:limit]]
+        tap_drill = tap_drill_for(q.thread) if fam == "drill" else None
+        follow = self._follow_ups(q, fam, products)
+        out = {
+            "query": q.text, "family": fam, "groups": [], "products": products,
+            "parsed": dict(q.attrs), "chips": self._chips(q, fam), "level": level,
+            "total_found": len(results), "relaxations": relaxed, "follow_ups": follow,
+        }
+        if availability:
+            out["availability"] = availability
+        if tap_drill:
+            out["tap_drill"] = tap_drill
+        if fam == "holder" and q.holder_code:
+            hint = holder_insert_hint(q.holder_code)
+            if hint:
+                out["fits_insert"] = hint
+        if q.family == "insert" and q.insert_code:
+            out["insert_code"] = q.insert_code
+        if q.family == "holder" and q.holder_code:
+            out["holder_code"] = q.holder_code
+        return out
+
+    def _related_pool(self, fam: str) -> List[Dict[str, Any]]:
+        if fam == "tap":
+            return self.by_family.get("die", [])
+        if fam == "die":
+            return self.by_family.get("tap", [])
+        if fam == "saw":
+            return [it for it in self.by_family.get("mill", []) if it.get("category") == "saw_blade"]
+        return []
+
+    def _collect(self, pool, q: Query, hard, soft, in_stock_only: bool, fam: str):
+        out = []
+        tokens = q.free_tokens
+        for it in pool:
+            attrs = it.get("attrs") or {}
+            if in_stock_only and it.get("stock", 0) <= 0:
+                continue
+            if not it.get("active", True) and it.get("stock", 0) <= 0:
+                continue
+            if not all(f(it) for _, f in hard):
+                continue
+            if not all(f(it) for _, f in soft):
+                continue
+            text_score = self._text_score(it, tokens)
+            code_lvl = 0
+            if q.insert_code or q.holder_code:
+                code_lvl = self._code_match(it, q.insert_code or q.holder_code or "")[0]
+            score = 0.0
+            if code_lvl == 3:
+                score += 120
+            elif code_lvl == 2:
+                score += 95
+            elif code_lvl == 1:
+                score += 80
+            elif hard:
+                score += 60
+            else:
+                score += 40
+            score += 3.0 * text_score
+            if tokens:
+                doc = it.get("_tokens") or set()
+                score += 4.0 * sum(1 for t in tokens if t in doc)
+            if it.get("stock", 0) > 0:
+                score += 5
+            if not it.get("price_on_request"):
+                score += 2
+            if it.get("active", True):
+                score += 1
+            score += min(it.get("stock", 0), 200) / 200.0
+            out.append((it, score))
+        out.sort(key=lambda x: (-x[1], -x[0].get("stock", 0)))
+        # склейка полных дублей по бренду и артикулу
+        seen, uniq = set(), []
+        for it, score in out:
+            key = (it.get("_brand_norm"), compact(it.get("sku") or it.get("name")))
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append((it, score))
+        return uniq
+
+    def _nearest_diameter(self, pool, want: float, fam: str, q: Query, limit: int):
+        cands = []
+        for it in pool:
+            d = (it.get("attrs") or {}).get("diameter_mm")
+            if d is None:
+                continue
+            if it.get("stock", 0) <= 0:
+                continue
+            cands.append((abs(float(d) - want), it))
+        if not cands:
+            return []
+        cands.sort(key=lambda x: (x[0], -x[1].get("stock", 0)))
+        best_diff = cands[0][0]
+        return [(it, 30 - diff) for diff, it in cands if diff <= best_diff + 1e-9][:limit]
+
+    # ---- карточка и подсказки --------------------------------------------------------------------
+    def _card(self, it: Dict[str, Any], score: float, q: Query) -> Dict[str, Any]:
+        attrs = it.get("attrs") or {}
+        price = it.get("price", 0.0)
+        por = bool(it.get("price_on_request"))
+        url = it.get("url") or ""
+        return {
+            "sku": it.get("sku", ""),
+            "code_1c": it.get("id", ""),
+            "name": it.get("name", ""),
+            "brand": it.get("brand", ""),
+            "category": it.get("category", ""),
+            "family": it.get("family", ""),
+            "grade": attrs.get("grade", ""),
+            "iso_group": attrs.get("iso_group", ""),
+            "stock": it.get("stock", 0),
+            "price": price,
+            "currency": it.get("currency", "RUB"),
+            "price_on_request": por,
+            "price_display": rates.price_display(price, it.get("currency", "RUB"), por),
+            "source_site": "qtool.ru",
+            "qtool_url": url,
+            "shop_links_markdown": f"[Открыть на qtool.ru]({url})" if url else "",
+            "attrs": {k: v for k, v in attrs.items() if v not in (None, "", [])},
+            "score": round(score, 2),
+        }
+
+    def _chips(self, q: Query, fam: Optional[str]) -> List[str]:
+        chips = []
+        if fam:
+            chips.append(f"группа: {FAMILY_TITLES.get(fam, fam)}")
+        a = q.attrs
+        if q.insert_code:
+            chips.append(f"код: {q.insert_code}")
+        if q.holder_code:
+            chips.append(f"код: {q.holder_code}")
+        if a.get("diameter_mm") and (not q.thread or a.get("tap_drill_for")):
+            chips.append(f"диаметр: {fmt_num(a['diameter_mm'])} мм")
+        if q.thread:
+            chips.append(f"резьба: {q.thread}")
+        if a.get("teeth"):
+            chips.append(f"зубьев: {a['teeth']}")
+        if a.get("ld_ratio"):
+            chips.append(f"длина: {a['ld_ratio']}D")
+        if a.get("angle_deg"):
+            chips.append(f"угол: {fmt_num(a['angle_deg'])}°")
+        if a.get("shank_mm"):
+            chips.append(f"хвостовик: {fmt_num(a['shank_mm'])} мм")
+        if a.get("iso_group"):
+            chips.append(f"группа ISO: {a['iso_group']}")
+        if a.get("operation"):
+            op_txt = {"finishing": "чистовая", "semi_finishing": "получистовая", "roughing": "черновая"}.get(a["operation"], a["operation"])
+            chips.append(f"обработка: {op_txt}")
+        if a.get("grade"):
+            chips.append(f"марка: {a['grade']}")
+        if a.get("collet_series"):
+            chips.append(f"серия: {a['collet_series']}")
+        if a.get("clamp_mm"):
+            chips.append(f"под диаметр: {fmt_num(a['clamp_mm'])} мм")
+        if a.get("thickness_mm"):
+            chips.append(f"толщина: {fmt_num(a['thickness_mm'])} мм")
+        if a.get("coating"):
+            chips.append(f"покрытие: {a['coating']}")
+        if a.get("material"):
+            chips.append(f"материал: {a['material']}")
+        if a.get("standard"):
+            chips.append(f"стандарт: {a['standard']}")
+        if a.get("radius_mm"):
+            chips.append(f"радиус: {fmt_num(a['radius_mm'])} мм")
+        return chips
+
+    def _follow_ups(self, q: Query, fam: str, products: List[Dict[str, Any]]) -> List[str]:
+        a = q.attrs
+        tips = []
+        if fam == "drill":
+            if not a.get("diameter_mm"):
+                tips.append("Укажите диаметр сверла (например «8,5 мм»).")
+            if not a.get("material"):
+                tips.append("Уточните материал: HSS, HSS-E (нержавейка) или твердый сплав.")
+        elif fam == "mill":
+            if not a.get("diameter_mm"):
+                tips.append("Укажите диаметр фрезы.")
+            if not a.get("teeth"):
+                tips.append("Уточните число зубьев (2F, 3F, 4F).")
+        elif fam in ("tap", "die"):
+            if not q.thread:
+                tips.append("Укажите резьбу: например М10х1,5.")
+        elif fam == "holder":
+            if not q.holder_code and not a.get("shank_mm"):
+                tips.append("Укажите сечение державки (16х16, 20х20, 25х25) или её код.")
+        elif fam == "insert":
+            if not q.insert_code:
+                tips.append("Укажите код пластины (например CNMG 120408) или форму и размер.")
+        return tips[:3]
+
+
+FAMILY_TITLES = {
+    "insert": "пластины",
+    "drill": "сверла",
+    "mill": "фрезы",
+    "tap": "метчики",
+    "die": "плашки",
+    "reamer": "развертки",
+    "countersink": "зенковки и фаскосниматели",
+    "holder": "державки и резцы",
+    "accessory": "оснастка и крепеж",
+    "measuring": "измерительный инструмент",
+    "saw": "пилы и диски",
+}

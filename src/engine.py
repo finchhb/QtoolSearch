@@ -29,11 +29,13 @@ from build_catalog import (
     download_qtool_price,
 )
 from src.analogs_engine import AnalogsEngine
+from src.catalog_search import CatalogSearchEngine
 from src.clarification_advisor import ClarificationAdvisor
 from src import rates
+from src.site_catalog import SITE_CSV, load_site_catalog
 from src import training
 from src.llm_client import LLMClient
-from src.reviewer import Reviewer, review_enabled
+from src.reviewer import Reviewer
 from src.hybrid_search import HybridSearchEngine
 from src import iso1832
 from src.materials_mapping import detect_material_note, find_unknown_marks
@@ -112,6 +114,10 @@ class ToolAdvisorEngine:
         self.active_source = "qtool"
         self.price_source_label = "qtool.ru (smennie_plastini_ISO_tochenie_03.11.26.xlsx)"
         self._tls = threading.local()
+        self.site_catalog_path = SITE_CSV
+        self._site_engine: Optional[CatalogSearchEngine] = None
+        self._site_mtime = 0.0
+        self._site_lock = threading.Lock()
 
         if os.path.exists("smennie_plastini_ISO_tochenie_03.11.26.xlsx"):
             self.qtool_xlsx_path = "smennie_plastini_ISO_tochenie_03.11.26.xlsx"
@@ -281,7 +287,42 @@ class ToolAdvisorEngine:
         except Exception as e:
             return False, f"Ошибка разбора файла '{filename}': {e}", self.get_catalog_stats()
 
+    def get_site_engine(self) -> Optional[CatalogSearchEngine]:
+        """Поиск по выгрузке qtool.ru (/upload/*.xlsx). Перезагружается при обновлении CSV без перезапуска сервера."""
+        try:
+            mtime = os.path.getmtime(self.site_catalog_path)
+        except OSError:
+            return None
+        if self._site_engine is not None and mtime == self._site_mtime:
+            return self._site_engine
+        with self._site_lock:
+            if self._site_engine is not None and mtime == self._site_mtime:
+                return self._site_engine
+            try:
+                items = load_site_catalog(self.site_catalog_path)
+            except Exception as e:
+                print(f"[каталог сайта] не удалось загрузить {self.site_catalog_path}: {e}")
+                items = []
+            self._site_engine = CatalogSearchEngine(items) if items else None
+            self._site_mtime = mtime
+        return self._site_engine
+
     def get_catalog_stats(self) -> Dict[str, Any]:
+        site = self.get_site_engine()
+        if site and site.items:
+            by_family: Dict[str, int] = {}
+            for it in site.items:
+                fam = it.get("family") or "other"
+                by_family[fam] = by_family.get(fam, 0) + 1
+            return {
+                "total": len(site.items),
+                "in_stock": sum(1 for x in site.items if int(x.get("stock") or 0) > 0),
+                "in_both_stores": 0,
+                "by_family": by_family,
+                "active_source": "site",
+                "source_label": "qtool.ru (/upload, все группы)",
+                "site_catalog": True,
+            }
         cat = self.search_engine.catalog if hasattr(self, "search_engine") else []
         return {
             "total": len(cat),
@@ -636,13 +677,14 @@ class ToolAdvisorEngine:
         return merged
 
     def process_query(self, user_query: str, chat_history: Optional[List[Dict[str, Any]]] = None, force_local: bool = False) -> Dict[str, Any]:
-        allow_review = (not force_local) and review_enabled()
+        # LLM не используется: подбор полностью детерминированный (парсер + каталог сайта).
+        allow_review = False
         positions = iso1832.split_positions(user_query)
         if len(positions) > 1:
             return self._process_multi(positions, allow_review)
         res = self.process_query_autonomous(user_query, allow_review=allow_review)
-        res["provider"] = "builtin"
-        res["model"] = "parser-ISO1832"
+        res["provider"] = "site_catalog"
+        res["model"] = "deterministic-catalog"
         res.setdefault("llm_status", "not_needed")
         return res
 
@@ -700,6 +742,28 @@ class ToolAdvisorEngine:
     _CLASS_RANGE = {"finishing": (5, 20), "semi_finishing": (15, 30), "medium": (15, 30), "roughing": (25, 40)}
     _ISO_NAMES = {"P": "сталь", "M": "нержавеющая сталь", "K": "чугун"}
     _OP_NAMES = {"finishing": "чистовая", "semi_finishing": "получистовая", "medium": "получистовая", "roughing": "черновая"}
+
+    _SITE_FAMILY_TITLES = {
+        "insert": "Пластины", "drill": "Сверла", "mill": "Фрезы", "tap": "Метчики",
+        "die": "Плашки", "reamer": "Развертки", "countersink": "Зенковки и фаскосниматели",
+        "holder": "Державки и резцы", "accessory": "Оснастка и крепеж",
+        "measuring": "Измерительный инструмент", "saw": "Пилы и диски",
+    }
+    _SITE_ATTR_FMT = (
+        ("diameter_mm", "Ø {} мм"), ("bore_mm", "посадочное Ø {} мм"), ("shank_mm", "хвостовик {} мм"),
+        ("length_mm", "длина {} мм"), ("cutting_length_mm", "раб. длина {} мм"),
+        ("thickness_mm", "толщина {} мм"), ("width_mm", "ширина {} мм"),
+        ("teeth", "зубьев {}"), ("thread", "резьба {}"), ("pitch_mm", "шаг {} мм"),
+        ("iso_code", "код {}"), ("insert_code", "пластина {}"), ("size_code", "размер {}"),
+        ("insert_shape", "форма {}"), ("corner_radius_mm", "R {} мм"), ("radius_mm", "радиус {} мм"),
+        ("angle_deg", "угол {}°"), ("clearance_angle", "задний угол {}"),
+        ("chipbreaker", "стружколом {}"), ("operation", "обработка {}"),
+        ("holder_code", "код державки {}"), ("insert_size_code", "пластина {}"),
+        ("collet_series", "серия {}"), ("clamp_range", "зажим {} мм"), ("clamp_mm", "под Ø {} мм"),
+        ("standard", "стандарт {}"), ("coating", "покрытие {}"), ("material", "материал {}"),
+        ("tolerance", "допуск {}"), ("hrc", "{} HRC"), ("ld_ratio", "{}-D"),
+        ("secondary_iso", "также ISO {}"),
+    )
 
     def _load_docs_classes(self) -> Dict[str, Dict[str, Any]]:
         """Классы применяемости сплавов (P05…K40) из справочника компании: data/grades_docs.csv (создаёт import_docs.py)."""
@@ -767,7 +831,132 @@ class ToolAdvisorEngine:
         return {"llm_checked": rv["status"] == "checked", "llm_status": rv["status"], "llm_reasons": rv["reasons"],
                 "llm_verdict": rv["verdict"], "llm_applied": rv["applied"], "llm_disagreements": rv["disagreements"]}
 
-    def process_query_autonomous(self, user_query: str, allow_review: bool = True) -> Dict[str, Any]:
+    # ------------------------------------------------------------------------------------------
+    # Каталог сайта qtool.ru: ответ по всем группам (без LLM)
+    # ------------------------------------------------------------------------------------------
+    def _site_answer(self, user_query: str, site: CatalogSearchEngine) -> Dict[str, Any]:
+        res = site.search(user_query, limit=8, in_stock_only=True)
+        if not res.get("products"):
+            self._log_unrecognized(user_query)
+        attrs = res.get("parsed") or {}
+        parsed = {
+            "iso": attrs.get("iso_group") or "", "operation": attrs.get("operation") or "",
+            "shape": attrs.get("insert_shape") or "", "size": attrs.get("size_code") or "",
+            "code": res.get("insert_code") or attrs.get("iso_code") or "",
+            "radius": attrs.get("corner_radius_mm"),
+        }
+        return {
+            "mode": "site_catalog", "decision": "site_search", "tool_called": "catalog_search",
+            "tool_result": res,
+            "tool_steps": [{"step": 1, "function": "catalog_search", "arguments": {"query": user_query}, "result": res}],
+            "response_text": self._format_site_response(res), "parsed": parsed,
+            "llm_checked": False, "llm_status": "not_needed",
+        }
+
+    @staticmethod
+    def _fmt_num(value: Any) -> str:
+        if isinstance(value, float):
+            return f"{value:g}".replace(".", ",")
+        return str(value)
+
+    @staticmethod
+    def _plural(n: int, one: str, few: str, many: str) -> str:
+        n = abs(int(n))
+        if n % 100 in (11, 12, 13, 14):
+            return many
+        if n % 10 == 1:
+            return one
+        if n % 10 in (2, 3, 4):
+            return few
+        return many
+
+    def _site_attr_parts(self, product: Dict[str, Any]) -> List[str]:
+        attrs = product.get("attrs") or {}
+        parts = []
+        for key, fmt in self._SITE_ATTR_FMT:
+            value = attrs.get(key)
+            if value in (None, "", []):
+                continue
+            if key == "operation":
+                value = self._OP_NAMES.get(value, value)
+            parts.append(fmt.format(self._fmt_num(value)))
+        return parts
+
+    def _render_site_product(self, idx: int, p: Dict[str, Any]) -> List[str]:
+        name = p.get("name") or p.get("sku") or ""
+        lines = [f"{idx}. **{name}**"]
+        sku = p.get("sku", "")
+        art = ""
+        if sku and sku != name:
+            art = f"   * **Артикул:** `{sku}`"
+        elif p.get("code_1c"):
+            art = f"   * **ID на сайте:** `{p['code_1c']}`"
+        if art and p.get("brand"):
+            art += f" | **Бренд:** {p['brand']}"
+        elif not art and p.get("brand"):
+            art = f"   * **Бренд:** {p['brand']}"
+        if art:
+            lines.append(art)
+        details = []
+        if p.get("grade"):
+            details.append(f"сплав `{p['grade']}`")
+        if p.get("iso_group"):
+            details.append(f"ISO `{p['iso_group']}`")
+        details.extend(self._site_attr_parts(p))
+        if details:
+            lines.append("   * **Характеристики:** " + ", ".join(details))
+        stock = int(p.get("stock") or 0)
+        avail = f"✅ В наличии: **{stock} шт.**" if stock > 0 else "⏳ под заказ"
+        lines.append(f"   * **Цена и остаток:** **{p.get('price_display') or 'по запросу'}** | {avail}")
+        if p.get("shop_links_markdown"):
+            lines.append(f"   * **Магазин:** {p['shop_links_markdown']}")
+        lines.append("")
+        return lines
+
+    def _format_site_response(self, res: Dict[str, Any]) -> str:
+        lines = ["### Поиск по каталогу qtool.ru"]
+        chips = res.get("chips") or []
+        if chips:
+            lines.append("**Понял запрос:** " + " · ".join(chips) + "\n")
+        total = int(res.get("total_found") or 0)
+        level = res.get("level") or ""
+        if res.get("family") is None:
+            word = self._plural(total, "позиция", "позиции", "позиций")
+            lines.append(f"Найдено в разных группах: **{total}** {word} — уточните группу, чтобы сузить выбор.\n")
+        else:
+            note = {"точное": "точное совпадение", "частичное": "частичное совпадение", "аналог": "ближайшие аналоги"}.get(level, level)
+            word = self._plural(total, "позиция", "позиции", "позиций")
+            lines.append(f"Найдено: **{total}** {word}" + (f" ({note})" if note else "") + "\n")
+        if res.get("availability"):
+            lines.append(f"> ⚠️ {res['availability']}\n")
+        if res.get("relaxations"):
+            lines.append("> ℹ️ " + "; ".join(res["relaxations"]) + "\n")
+        td = res.get("tap_drill")
+        if td:
+            lines.append(f"**Сверло под резьбу {td['thread']}:** Ø {self._fmt_num(td['drill_mm'])} мм.\n")
+        if res.get("fits_insert"):
+            lines.append(f"**Подходящая пластина:** {res['fits_insert']}.\n")
+        products = res.get("products") or []
+        if not products:
+            lines.append("⚠️ По этому запросу в каталоге ничего не найдено — уточните группу, код или размер.\n")
+        groups = res.get("groups") or []
+        if groups:
+            for g in groups:
+                title = self._SITE_FAMILY_TITLES.get(g.get("family"), g.get("title") or g.get("family"))
+                lines.append(f"**{title}** — найдено {g.get('total_found', 0)}")
+                for i, p in enumerate(g.get("products") or [], 1):
+                    lines.extend(self._render_site_product(i, p))
+        else:
+            for i, p in enumerate(products, 1):
+                lines.extend(self._render_site_product(i, p))
+        follow = res.get("follow_ups") or []
+        if follow:
+            lines.append("### 💡 Уточните запрос")
+            for i, tip in enumerate(follow[:3], 1):
+                lines.append(f"{i}. {tip}")
+        return "\n".join(lines).strip()
+
+    def process_query_autonomous(self, user_query: str, allow_review: bool = False) -> Dict[str, Any]:
         self._current_user_query = user_query
         lower = user_query.lower()
         completeness = self.clarification_advisor.analyze_query_completeness(user_query)
@@ -783,6 +972,13 @@ class ToolAdvisorEngine:
                 "tool_steps": [{"step": 1, "function": "get_analogs", "arguments": args, "result": tool_res}],
                 "response_text": self._format_analog_response(user_query, tool_res), "llm_status": "not_needed",
             }
+
+        # 2. Каталог сайта qtool.ru (/upload): все группы одним детерминированным поиском.
+        # Запросы про совместимость («державка под пластину CNMG») остаются в старом разборе.
+        site = self.get_site_engine()
+        compat_query = bool(re.search(r"под\s+(?:пластин|резец)|совместим|подходит\s+(?:ли\s+)?(?:к|под)|какая\s+державк", lower))
+        if site is not None and not compat_query:
+            return self._site_answer(user_query, site)
 
         search_args = self._detect_search_args(user_query)
         parsed_orig = {"iso": search_args["iso_group"] or "", "operation": search_args["operation"] or ""}  # что определил парсер сам

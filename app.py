@@ -166,7 +166,8 @@ def effective_query(sid: str, q: str) -> str:
 
 def public_result(res: Dict[str, Any]) -> Dict[str, Any]:
     """Наружу отдаём только нужное для показа — без внутренних аргументов поиска и служебных полей."""
-    keep = ("sku", "name", "brand", "grade", "iso_group", "stock", "price_display", "price_on_request", "shop_links_markdown", "in_both_stores")
+    keep = ("sku", "name", "brand", "grade", "iso_group", "stock", "price_display", "price_on_request",
+            "shop_links_markdown", "in_both_stores", "family", "category", "qtool_url", "attrs")
     prods = [{k: p.get(k) for k in keep if k in p} for p in ((res.get("tool_result") or {}).get("products") or [])[:6]]
     out_parsed = {"parsed": res.get("parsed")} if not PUBLIC else {}
     return {
@@ -278,14 +279,17 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/status":
             st = engine.get_catalog_stats()
             try:
-                updated = time.strftime("%d.%m.%Y %H:%M", time.localtime(os.path.getmtime(engine.search_engine.catalog_path)))
+                path = engine.site_catalog_path if os.path.exists(engine.site_catalog_path) else engine.search_engine.catalog_path
+                updated = time.strftime("%d.%m.%Y %H:%M", time.localtime(os.path.getmtime(path)))
             except OSError:
                 updated = ""
-            out = {"total": st["total"], "in_stock": st["in_stock"], "catalog_updated": updated}
+            out = {"total": st["total"], "in_stock": st["in_stock"], "catalog_updated": updated,
+                   "by_family": st.get("by_family") or {}, "source": st.get("active_source"),
+                   "source_label": st.get("source_label", "")}
             admin_ok = self._admin_ok()
             if admin_ok:  # кнопки настроек в шапке чата видны только тем, кому доступна админка
                 out["local_admin"] = True
-                out["llm_on"] = bool(engine.llm.is_configured() and engine.reviewer.enabled)
+                out["llm_on"] = False  # подбор по каталогу сайта не использует LLM
             return self._json(out)
         if path == "/api/admin/status":
             if not self._admin_ok():
@@ -494,10 +498,9 @@ def main() -> None:
         sys.exit(1)
 
     st = engine.get_catalog_stats()
-    llm = engine.llm
     print("=" * 68)
-    print(f"  Подбор токарных пластин v8.4 | режим: {MODE} | движок: внутренний парсер")
-    print(f"  Проверка LLM: {'включена (' + llm.model + ')' if (llm.is_configured() and engine.reviewer.enabled) else 'выключена (нет LLM_API_KEY) — отвечает только парсер'}")
+    print(f"  Подбор инструмента qtool.ru | режим: {MODE}")
+    print("  Поиск: детерминированный, без LLM")
     print(f"  База: {st['source_label']} | позиций: {st['total']} | в наличии: {st['in_stock']}")
     print(f"  Адрес: http://localhost:{bound}   Админка: /admin")
     print("=" * 68)
