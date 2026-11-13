@@ -5,6 +5,7 @@ from src.catalog_search import (
     CatalogSearchEngine,
     Query,
     clamp_accepts_hole,
+    holder_code_from_text,
     holder_insert_compat,
     insert_compat_key,
     is_self_contained_query,
@@ -328,6 +329,19 @@ class HolderCodeParsingTest(unittest.TestCase):
         self.assertEqual(q.family, "insert")
         self.assertEqual(q.insert_code, "CNMG120408")
 
+    def test_short_series_is_not_a_holder_code(self):
+        # «SBHA32» — серия держателей осевого инструмента, а не код державки ISO 5608
+        self.assertIsNone(holder_code_from_text("SBHA32"))
+        self.assertIsNone(holder_code_from_text("SBHA12-20"))
+        q = Query("sbha32")
+        self.assertIsNone(q.holder_code)
+        self.assertNotEqual(q.family, "holder")
+
+    def test_partial_iso_code_is_still_a_holder_code(self):
+        # сечение без класса длины и размера пластины — допустимая запись, не серия оснастки
+        self.assertEqual(holder_code_from_text("mcbnr 2020"), "MCBNR2020")
+        self.assertEqual(holder_code_from_text("mtjnr 2525"), "MTJNR2525")
+
 
 class HolderSubgroupTest(unittest.TestCase):
     """Слова запроса задают подгруппу державки: «расточная» — внутренние, «хвост 25» — диаметр."""
@@ -424,6 +438,32 @@ class ToolHolderTest(unittest.TestCase):
 
     def test_tap_holder_stays_in_taps(self):
         self.assertEqual(Query("держатель для метчика М10").family, "tap")
+
+    def test_spaced_sbha_article_is_parsed_as_tool_holder(self):
+        # «sbha12 20» — та же артикул-запись, что «SBHA12-20»
+        q = Query("sbha12 20")
+        self.assertEqual(q.family, "accessory")
+        self.assertEqual(q.category_hints, ["tool_holder"])
+        self.assertEqual((q.attrs.get("shank_mm"), q.attrs.get("clamp_mm")), (12.0, 20.0))
+        res = self.engine.search("sbha12 20")
+        self.assertEqual([p["sku"] for p in res["products"]], ["SBHA12-20"])
+
+    def test_sbha_series_without_article_size(self):
+        # «sbha20» — серия по хвостовику 20, а не код державки и не 0 результатов
+        q = Query("sbha20")
+        self.assertEqual(q.family, "accessory")
+        self.assertEqual(q.category_hints, ["tool_holder"])
+        self.assertIsNone(q.holder_code)
+        self.assertEqual(q.attrs.get("shank_mm"), 20.0)
+        res = self.engine.search("sbha20")
+        self.assertEqual([p["sku"] for p in res["products"]], ["SBHA20-32"])
+
+    def test_reversed_under_shank_phrase_filters(self):
+        # «под 20 хвостовик» — размер перед словом; фильтр тот же, что у «под хвостовик 20»
+        res = self.engine.search("держатель осевого инструмента под 20 хвостовик")
+        self.assertEqual([p["sku"] for p in res["products"]], ["SBHA12-20"])
+        self.assertIn("под хвостовик: 20 мм", res["chips"])
+        self.assertNotIn("Укажите диаметр хвостовика", " ".join(res["follow_ups"]))
 
 
 class ClampHoleTest(unittest.TestCase):

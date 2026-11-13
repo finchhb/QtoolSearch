@@ -148,8 +148,10 @@ def insert_code_from_text(text: str) -> Optional[str]:
 def holder_code_from_text(text: str) -> Optional[str]:
     """PCLNR 2525 M12 / SNR0006K06-A12 -> компактный код с сохранением дефиса.
 
-    Берём только токены, которые целиком состоят из латиницы (омоглифы допускаются):
-    «державка» после транслитерации иначе приклеивалась бы к коду.
+    Кодом считаем только структурно полную оснастку ISO 5608: короткие серии
+    («SBHA32») — держатели осевого инструмента, а не державки. Берём только токены,
+    которые целиком состоят из латиницы (гомоглифы допускаются): «державка» после
+    транслитерации иначе приклеивалась бы к коду.
     """
     toks = re.findall(r"[A-Za-zА-Яа-яЁё0-9-]+", text or "")
     for i, tok in enumerate(toks):
@@ -157,7 +159,7 @@ def holder_code_from_text(text: str) -> Optional[str]:
         if any(ch.isalpha() and not ("A" <= ch.upper() <= "Z") for ch in letters):
             continue
         cand = letters.upper()
-        if re.fullmatch(r"[A-Z]{1,6}\d{2,5}[A-Z]?\d{0,4}(?:-[A-Z0-9]{1,10})?", cand):
+        if parse_holder_code(cand):
             return cand
         if re.fullmatch(r"[A-Z]{1,6}", cand):
             digits = ""
@@ -169,7 +171,7 @@ def holder_code_from_text(text: str) -> Optional[str]:
                     j += 1
                 else:
                     break
-            if re.fullmatch(r"\d{2,5}[A-Z]?\d{0,4}", digits):
+            if digits and parse_holder_code(cand + digits):
                 return cand + digits
     return None
 
@@ -312,7 +314,8 @@ class Query:
             if re.search(pattern, low):
                 self.category_hints.append(cat)
 
-        m = re.search(r"(?<![A-Za-z0-9])SBHA\)?\s*(\d{2})\s*[-–]\s*(\d{2})(?:\s*[-–]\s*(\d{2,3}))?", self.text, re.I)
+        m = re.search(r"(?<![A-Za-z0-9])SBHA\)?\s*(\d{2})(?:\s*[-–]\s*|\s+)(\d{2})(?:\s*[-–]\s*(\d{2,3}))?",
+                      self.text, re.I)
         if m:
             # «SBHA12-20»: держатель осевого инструмента — 12 хвостовик, 20 хвост инструмента
             self.family = "accessory"
@@ -322,6 +325,14 @@ class Query:
             self.attrs["clamp_mm"] = float(m.group(2))
             if m.group(3):
                 self.attrs["length_mm"] = float(m.group(3))
+        elif re.search(r"(?<![A-Za-z0-9])SBHA(?![A-Za-z])", self.text, re.I):
+            # «SBHA32» / «SBHA» без второго числа — серия держателей осевого инструмента
+            self.family = "accessory"
+            if "tool_holder" not in self.category_hints:
+                self.category_hints.append("tool_holder")
+            one = re.search(r"(?<![A-Za-z0-9])SBHA\)?\s*(\d{2})(?!\d)", self.text, re.I)
+            if one:
+                self.attrs["shank_mm"] = float(one.group(1))
 
         # Обратный подбор: «пластина под державку MCLNR2525M12» — какие пластины в неё ставятся.
         # Код после слова «державка» — это код державки, а не пластины.
@@ -458,6 +469,9 @@ class Query:
             self.attrs["radius_mm"] = float(r.group(1).replace(",", "."))
 
         m = re.search(r"(?:хв\.?\s*|хвост[а-яё]*\s*)(\d{1,3}(?:[.,]\d+)?)(?!\d)", low)
+        if not m:
+            # «под 20 хвостовик»: размер стоит перед словом, а не после
+            m = re.search(r"\bпод\s+(\d{1,3}(?:[.,]\d+)?)\s*(?:мм\s*)?(?:хв\.?|хвост[а-яё]*)", low)
         if m:
             val = float(m.group(1).replace(",", "."))
             if 1 <= val <= 200:
@@ -666,9 +680,9 @@ def is_self_contained_query(text: str) -> bool:
     if size_hits and len(topic.split()) >= 3:
         return True
     q = Query(topic)
-    # «M10» даёт holder_code, но это размер резьбы в уточнении, а не код оснастки
-    return bool(q.insert_code or (q.holder_code and parse_holder_code(q.holder_code))
-                or "tool_holder" in q.category_hints)
+    # «M10» даёт holder_code, но это размер резьбы в уточнении, а не код оснастки;
+    # holder_code теперь бывает только структурно полным кодом ISO 5608
+    return bool(q.insert_code or q.holder_code or "tool_holder" in q.category_hints)
 
 
 def mill_insert_codes(name: str) -> List[str]:
