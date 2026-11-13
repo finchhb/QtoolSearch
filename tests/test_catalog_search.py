@@ -96,6 +96,16 @@ class SelfContainedQueryTest(unittest.TestCase):
         for q in ("mcbnr 2020", "MCBNR2020", "PCLNR 2525M12", "CNMG 120408"):
             self.assertTrue(is_self_contained_query(q), q)
 
+    def test_explicit_size_message_is_self_contained(self):
+        # «хвостовик 20 мм» после предыдущего запроса — новый инструмент, а не уточнение
+        for q in ("хвостовик 20 мм", "сечение 25 на 25", "диаметр 8,5 мм", "хвостовиком 32 мм"):
+            self.assertTrue(is_self_contained_query(q), q)
+
+    def test_under_phrase_with_size_is_not_self_contained(self):
+        # «под хвостовик 20» — уточнение к предыдущему запросу, хотя размер и назван
+        for q in ("под хвостовик 20", "под сечение 25"):
+            self.assertFalse(is_self_contained_query(q), q)
+
     def test_clarifications_are_not_self_contained(self):
         for q in ("12", "под CNMG12", "под пластину DNMG15", "чистовая", "M10", "cnmg12"):
             self.assertFalse(is_self_contained_query(q), q)

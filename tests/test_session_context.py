@@ -38,6 +38,15 @@ class EffectiveQueryTest(unittest.TestCase):
     def test_plate_code_clarification_is_merged(self):
         self.assertEqual(app.effective_query(self.sid, "под cnmg12"), PREV + ". под cnmg12")
 
+    def test_under_shank_clarification_is_merged(self):
+        app.SESSIONS.put(self.sid, last_q="держатель осевого инструмента", decision="site_search")
+        self.assertEqual(app.effective_query(self.sid, "под хвостовик 20"),
+                         "держатель осевого инструмента. под хвостовик 20")
+
+    def test_explicit_size_starts_new_query(self):
+        q = "хвостовик 20 мм"
+        self.assertEqual(app.effective_query(self.sid, q), q)
+
 
 if __name__ == "__main__":
     unittest.main()

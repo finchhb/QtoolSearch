@@ -646,6 +646,9 @@ _RE_FAMILY_TOPIC = re.compile(
     r"фаскосним|гратосним|державк|борштанг|резец|резц|минирез|оправк|расточн|"
     r"цанг|патрон|винт|гайк|ключ|пил|держател|sbha)", re.I
 )
+# Явный размер инструмента: «хвостовик 20 мм», «сечение 25 на 25», «диаметр 8,5».
+_RE_EXPLICIT_SIZE = re.compile(r"\b(?:хвостовик|сечени|диаметр)", re.I)
+_RE_UNDER_WORD = re.compile(r"\bпод\s+$", re.I)
 
 
 def is_self_contained_query(text: str) -> bool:
@@ -654,7 +657,13 @@ def is_self_contained_query(text: str) -> bool:
     Уточнения («12», «под CNMG12», «чистовая», «под пластину DNMG15») группу и код не задают.
     """
     topic = _RE_UNDER_INSERT.sub(" ", text or "")
-    if _RE_FAMILY_TOPIC.search(topic.lower()):
+    low = topic.lower()
+    if _RE_FAMILY_TOPIC.search(low):
+        return True
+    # Явный размер в фразе из трёх слов и более — новый запрос, а не уточнение.
+    # «под хвостовик 20» размер не задаёт: это уточнение к предыдущему запросу.
+    size_hits = [m for m in _RE_EXPLICIT_SIZE.finditer(low) if not _RE_UNDER_WORD.search(low[:m.start()])]
+    if size_hits and len(topic.split()) >= 3:
         return True
     q = Query(topic)
     # «M10» даёт holder_code, но это размер резьбы в уточнении, а не код оснастки
