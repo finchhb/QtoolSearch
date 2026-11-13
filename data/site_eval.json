@@ -89,6 +89,32 @@
     "must_include": "BAP 400R 63-22-4T"
   },
   {
+    "query": "державка 2525 под CNMG1204",
+    "family": "holder",
+    "compatible_insert": "CNMG1204",
+    "chips_include": ["под пластину: CNMG1204", "сечение: 25×25 мм"],
+    "must_include": "MCLNR2525M12"
+  },
+  {
+    "query": "державка под CNMG1204",
+    "family": "holder",
+    "compatible_insert": "CNMG1204",
+    "must_include": "MCLNL1616H12"
+  },
+  {
+    "query": "фреза 120 под APMT",
+    "family": "mill",
+    "level": "аналог",
+    "compatible_insert": "APMT",
+    "must_include": "BAP 400R 125"
+  },
+  {
+    "query": "фреза под APMT1604",
+    "family": "mill",
+    "compatible_insert": "APMT1604",
+    "must_include": "BAP 400R 63-22-4T"
+  },
+  {
     "query": "8,5",
     "total_max": 0
   },

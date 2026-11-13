@@ -47,6 +47,16 @@ ITEMS = [
          thread="M8x1.25", pitch_mm=1.25, diameter_mm=8.0, material="HSS-E"),
     item("holder", "holder_external", "PCLNR2525M12 Державка для наружного точения",
          sku="PCLNR2525M12", holder_code="PCLNR2525M12"),
+    item("holder", "holder_external", "MCLNR2020K12 Державка для наружного точения",
+         sku="MCLNR2020K12", holder_code="MCLNR2020K12"),
+    item("holder", "holder_external", "SCLCR2525M12 Державка для наружного точения",
+         sku="SCLCR2525M12", holder_code="SCLCR2525M12"),
+    item("mill", "face_mill", "BAP 400R 63-22-4T под APMT1604** корпусная фреза",
+         sku="BAP400R-63", diameter_mm=63.0, bore_mm=22.0, teeth=4),
+    item("mill", "face_mill", "BAP 400R 125-40-7T под APMT1604** корпусная фреза",
+         sku="BAP400R-125", diameter_mm=125.0, bore_mm=40.0, teeth=7),
+    item("mill", "face_mill", "ASRF12 50-22-4Т под SDMT1205** корпусная фреза",
+         sku="ASRF12-50", diameter_mm=50.0, bore_mm=22.0, teeth=4),
     item("reamer", "machine_reamer", "Развертка машинная 8 H7", sku="REAM8",
          diameter_mm=8.0, tolerance="H7"),
     item("reamer", "machine_reamer", "Развертка машинная 12 H7", sku="REAM12",
@@ -143,6 +153,34 @@ class CatalogSearchTest(unittest.TestCase):
         res = self.engine.search("державка PCLNR 2525M12")
         self.assertEqual(res["family"], "holder")
         self.assertEqual(res["products"][0]["sku"], "PCLNR2525M12")
+
+    def test_holder_fits_insert_by_section_and_type(self):
+        res = self.engine.search("державка 2525 под cnmg1204")
+        skus = {p["sku"] for p in res["products"]}
+        self.assertEqual(res["family"], "holder")
+        self.assertIn("PCLNR2525M12", skus)
+        self.assertNotIn("MCLNR2020K12", skus)   # другое сечение
+        self.assertNotIn("SCLCR2525M12", skus)   # задний угол C — под CCMT, не CNMG
+        self.assertIn("под пластину: CNMG1204", res["chips"])
+
+    def test_holder_fits_insert_without_section(self):
+        res = self.engine.search("державка под cnmg1204")
+        skus = {p["sku"] for p in res["products"]}
+        self.assertIn("PCLNR2525M12", skus)
+        self.assertIn("MCLNR2020K12", skus)
+        self.assertNotIn("SCLCR2525M12", skus)
+
+    def test_mill_body_fits_insert_nearest_diameter(self):
+        res = self.engine.search("фреза 120 под APMT")
+        self.assertEqual(res["family"], "mill")
+        self.assertEqual(res["level"], "аналог")
+        self.assertEqual([p["sku"] for p in res["products"]], ["BAP400R-125"])
+        self.assertTrue(any("ближайший" in r for r in res["relaxations"]))
+
+    def test_mill_body_fits_insert_prefix(self):
+        res = self.engine.search("фреза под APMT1604")
+        skus = {p["sku"] for p in res["products"]}
+        self.assertEqual(skus, {"BAP400R-63", "BAP400R-125"})
 
     def test_collet_series_and_clamp(self):
         res = self.engine.search("цанга ER32 12")

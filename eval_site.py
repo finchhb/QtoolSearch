@@ -35,7 +35,7 @@ def _check(res, exp) -> list:
         errors.append(f"найдено {res.get('total_found')} < {exp['total_min']}")
     if "total_max" in exp and int(res.get("total_found") or 0) > int(exp["total_max"]):
         errors.append(f"найдено {res.get('total_found')} > {exp['total_max']}")
-    for key in ("insert_code", "holder_code"):
+    for key in ("insert_code", "holder_code", "compatible_insert"):
         if key in exp and res.get(key) != exp[key]:
             errors.append(f"{key}: ждали {exp[key]}, получили {res.get(key)}")
     for key, want in (exp.get("attrs") or {}).items():

@@ -750,7 +750,8 @@ class ToolAdvisorEngine:
         "measuring": "Измерительный инструмент", "saw": "Пилы и диски",
     }
     _SITE_ATTR_FMT = (
-        ("diameter_mm", "Ø {} мм"), ("bore_mm", "посадочное Ø {} мм"), ("shank_mm", "хвостовик {} мм"),
+        ("diameter_mm", "Ø {} мм"), ("bore_mm", "посадочное Ø {} мм"),
+        ("shank_section", "сечение {} мм"), ("shank_mm", "хвостовик {} мм"),
         ("length_mm", "длина {} мм"), ("cutting_length_mm", "раб. длина {} мм"),
         ("thickness_mm", "толщина {} мм"), ("width_mm", "ширина {} мм"),
         ("teeth", "зубьев {}"), ("thread", "резьба {}"), ("pitch_mm", "шаг {} мм"),
@@ -759,6 +760,7 @@ class ToolAdvisorEngine:
         ("angle_deg", "угол {}°"), ("clearance_angle", "задний угол {}"),
         ("chipbreaker", "стружколом {}"), ("operation", "обработка {}"),
         ("holder_code", "код державки {}"), ("insert_size_code", "пластина {}"),
+        ("compatible_inserts", "под пластины {}"),
         ("collet_series", "серия {}"), ("clamp_range", "зажим {} мм"), ("clamp_mm", "под Ø {} мм"),
         ("standard", "стандарт {}"), ("coating", "покрытие {}"), ("material", "материал {}"),
         ("tolerance", "допуск {}"), ("hrc", "{} HRC"), ("ld_ratio", "{}-D"),
@@ -877,13 +879,15 @@ class ToolAdvisorEngine:
             value = attrs.get(key)
             if value in (None, "", []):
                 continue
+            if key == "shank_mm" and attrs.get("shank_section"):
+                continue
             if key == "operation":
                 value = self._OP_NAMES.get(value, value)
             parts.append(fmt.format(self._fmt_num(value)))
         return parts
 
     def _render_site_product(self, idx: int, p: Dict[str, Any]) -> List[str]:
-        name = p.get("name") or p.get("sku") or ""
+        name = (p.get("name") or p.get("sku") or "").replace("*", "\\*")
         lines = [f"{idx}. **{name}**"]
         sku = p.get("sku", "")
         art = ""
@@ -936,6 +940,9 @@ class ToolAdvisorEngine:
             lines.append(f"**Сверло под резьбу {td['thread']}:** Ø {self._fmt_num(td['drill_mm'])} мм.\n")
         if res.get("fits_insert"):
             lines.append(f"**Подходящая пластина:** {res['fits_insert']}.\n")
+        if res.get("compatible_insert"):
+            what = "державки" if res.get("family") == "holder" else "корпуса фрез"
+            lines.append(f"**Подбор под пластину {res['compatible_insert']}:** показаны {what}, которые с ней совместимы.\n")
         products = res.get("products") or []
         if not products:
             lines.append("⚠️ По этому запросу в каталоге ничего не найдено — уточните группу, код или размер.\n")

@@ -119,6 +119,15 @@ _HOLDER_PREFIXES = {
 }
 _INSERT_SHAPES = set("ABCDEHKLMOPRSTVW")
 
+# частые префиксы пластин: нужны, чтобы понимать «под APMT» без размера
+_COMMON_INSERT_PREFIXES = {
+    "CNMG", "DNMG", "VNMG", "WNMG", "TNMG", "SNMG", "KNMX", "KNUX",
+    "CCMT", "DCMT", "VCMT", "TCMT", "SCMT", "CCGT", "DCGT", "VCGT", "TCGT",
+    "APMT", "APKT", "APHT", "SEKT", "SEKR", "SPKN", "SPMT", "XDLT",
+    "RPMT", "RDMW", "RDMT", "LNMU", "LNMT", "SDMT", "EPNW", "WNMU",
+    "MGMN", "ZQMX", "16ER", "16IR", "22ER", "22IR",
+}
+
 
 def insert_code_from_text(text: str) -> Optional[str]:
     """CNMG 12 04 08 / CNMG120408 -> CNMG120408. Хвост из букв (стружколом) не приклеиваем."""
@@ -240,7 +249,7 @@ CATEGORY_HINTS = {
 
 
 class Query:
-    def __init__(self, text: str):
+    def __init__(self, text: str, insert_prefixes: Optional[set] = None):
         self.text = (text or "").strip()
         self.low = self.text.lower().replace("ё", "е")
         self.variants = query_variants(self.text)
@@ -254,10 +263,23 @@ class Query:
         self.thread: Optional[str] = None
         self.brand: Optional[str] = None
         self.free_tokens: List[str] = []
+        self.compat_insert: Optional[str] = None
+        self.compat_prefix: Optional[str] = None
+        self.compat_shape: Optional[str] = None
+        self.compat_clearance: Optional[str] = None
+        self.compat_size: Optional[str] = None
+        self._insert_prefixes = insert_prefixes or set()
         self._parse()
 
     def _parse(self) -> None:
         low = self.low
+        # «державка 2525 под CNMG1204», «фреза 120 под APMT» — код после «под» задаёт
+        # совместимую пластину, а группа определяется по основному слову запроса.
+        code_text = self.text
+        under = self._parse_compat_insert()
+        if under:
+            code_text = (self.text[:under[0]] + " " + self.text[under[1]:]).strip()
+            low = code_text.lower().replace("ё", "е")
         for fam, pattern in FAMILY_KEYWORDS:
             if re.search(pattern, low):
                 self.family = fam
@@ -275,7 +297,9 @@ class Query:
                     self.family = "insert"
                     break
         if self.family in (None, "holder"):
-            for v in self.variants:
+            # без варианта «неверная раскладка»: русские слова превращаются в латинский
+            # набор, который иначе склеивается с сечением в ложный код державки
+            for v in query_variants(code_text)[:3]:
                 code = holder_code_from_text(v)
                 if code:
                     self.holder_code = code
@@ -383,6 +407,11 @@ class Query:
             self.attrs["shank_mm"] = float(m.group(1).replace(",", "."))
 
         dims = _dims(self.text)
+        if self.family == "holder" and "shank_mm" not in self.attrs:
+            sec = re.search(r"(?<!\d)(\d{2})(\d{2})(?!\d)", code_text)
+            if sec and sec.group(1) == sec.group(2) and 8 <= int(sec.group(1)) <= 50:
+                self.attrs["shank_mm"] = float(sec.group(1))
+                self.attrs["shank_section"] = sec.group(0)
         if dims and self.family == "holder" and "shank_mm" not in self.attrs:
             self.attrs["shank_mm"] = dims[0]
 
@@ -413,6 +442,34 @@ class Query:
             "державки", "мм", "шт", "цена", "стоимость", "сколько", "стоит", "с", "и", "или",
         }
         self.free_tokens = [t for t in tokenize(self.text) if t not in stop and len(t) > 1 and not re.fullmatch(r"\d+[.,]?\d*", t)]
+        if self.compat_insert:
+            self.free_tokens = [t for t in self.free_tokens if t != self.compat_insert.lower()]
+
+    def _parse_compat_insert(self) -> Optional[Tuple[int, int]]:
+        """Фрагмент «под <код пластины>» -> поля совместимости; возвращает его границы."""
+        for m in _RE_UNDER_INSERT.finditer(self.text):
+            raw = m.group(1).lower().replace("ё", "е")
+            if raw in {"резьбу", "резьбы", "пластину", "пластины", "пластин", "метчика", "метчик"}:
+                continue
+            word = cyrillic_code_letters(homoglyph_latin(m.group(1))).upper()
+            digits = m.group(2) or ""
+            if not re.fullmatch(r"[A-Z]{2,5}", word) or word[0] not in _INSERT_SHAPES:
+                continue
+            if not digits and word not in self._insert_prefixes and word not in _COMMON_INSERT_PREFIXES:
+                continue
+            self._set_compat(word + digits)
+            return m.start(), m.end()
+        return None
+
+    def _set_compat(self, code: str) -> None:
+        info = insert_compat_key(code)
+        if not info:
+            return
+        self.compat_insert = code.upper()
+        self.compat_prefix = info["prefix"]
+        self.compat_shape = info["shape"]
+        self.compat_clearance = info["clearance"]
+        self.compat_size = info["size"]
 
 
 # --------------------------------------------------------------------------------------------------
@@ -453,6 +510,74 @@ def holder_insert_hint(code: Optional[str]) -> Optional[str]:
     return f"{INSERT_LETTER.get(shape, shape)} {m.group(3)}xxxx"
 
 
+# Пять букв кода державки: зажим, форма, стиль, задний угол, рука (R/L/N),
+# затем сечение (2525), длина (M/K/P/H) и размер пластины (12/16).
+_HOLDER_CORE_RE = re.compile(
+    r"(?<![A-Z0-9])([A-Z])([A-Z])([A-Z])([A-Z])([LRN])(\d{2,4})?([A-Z])?(\d{2})(?![0-9])"
+)
+
+
+def holder_insert_compat(code: Optional[str]) -> Optional[Dict[str, Any]]:
+    """MCLNR2525M12 -> форма C, задний угол N, пластина 12, сечение 25 мм."""
+    if not code:
+        return None
+    m = _HOLDER_CORE_RE.search(code.upper())
+    if not m:
+        return None
+    shank = None
+    block = m.group(6) or ""
+    if len(block) == 4:
+        hi, lo = int(block[:2]), int(block[2:])
+        if 8 <= hi <= 50 and 8 <= lo <= 50:
+            shank = float(hi)
+    return {
+        "shape": m.group(2),
+        "clearance": m.group(4),
+        "size": m.group(8),
+        "shank_mm": shank,
+    }
+
+
+def insert_compat_key(code: Optional[str]) -> Dict[str, Any]:
+    """CNMG1204 -> форма C, задний угол N, размер 12; APMT -> только префикс."""
+    letters = re.match(r"[A-Z]+", (code or "").upper())
+    if not letters:
+        return {}
+    pref = letters.group(0)
+    digits = (code or "").upper()[len(pref):]
+    return {
+        "prefix": pref,
+        "shape": pref[0],
+        "clearance": pref[1] if len(pref) >= 2 else None,
+        "size": digits[:2] if len(digits) >= 2 else None,
+    }
+
+
+_RE_UNDER_INSERT = re.compile(
+    r"(?<![A-Za-zА-Яа-яЁё])под\s+([A-Za-zА-Яа-яЁё]{2,6})\s*(\d{2,6})?", re.I
+)
+_RE_PAREN_INSERT = re.compile(r"\(([A-Z]{2,5}\d{2,4})")
+
+
+def mill_insert_codes(name: str) -> List[str]:
+    """Корпуса фрез: «под APMT1604**», «(APKT1604**)» -> ['APMT1604', 'APKT1604']."""
+    out: List[str] = []
+    for m in _RE_UNDER_INSERT.finditer(name or ""):
+        raw = m.group(1).lower().replace("ё", "е")
+        if raw in {"резьбу", "резьбы", "пластину", "пластины", "пластин", "метчика", "метчик"}:
+            continue
+        word = cyrillic_code_letters(homoglyph_latin(m.group(1))).upper()
+        if not re.fullmatch(r"[A-Z]{2,5}", word) or word[0] not in _INSERT_SHAPES:
+            continue
+        code = word + (m.group(2) or "")
+        if code not in out:
+            out.append(code)
+    for m in _RE_PAREN_INSERT.finditer((name or "").upper()):
+        if m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
 # --------------------------------------------------------------------------------------------------
 # Поисковый движок
 # --------------------------------------------------------------------------------------------------
@@ -482,6 +607,19 @@ class CatalogSearchEngine:
             iso = str(attrs.get("iso_code") or "").strip().upper()
             if len(iso) >= 4:
                 prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
+            if it["family"] == "holder":
+                info = holder_insert_compat(str(attrs.get("holder_code") or it.get("sku") or ""))
+                if info:
+                    it["_insert_compat"] = info
+                    if info.get("shank_mm") and not attrs.get("shank_mm"):
+                        attrs["shank_mm"] = info["shank_mm"]
+                        side = int(info["shank_mm"])
+                        attrs.setdefault("shank_section", f"{side}×{side}")
+            elif it["family"] == "mill":
+                codes = mill_insert_codes(str(it.get("name") or ""))
+                if codes:
+                    it["_mill_inserts"] = codes
+                    attrs["compatible_inserts"] = ", ".join(codes)
             text = " ".join(str(x) for x in (
                 it.get("sku"), it.get("name"), it.get("brand"), it.get("category"),
                 attrs.get("iso_code"), attrs.get("holder_code"), attrs.get("grade"),
@@ -626,6 +764,8 @@ class CatalogSearchEngine:
                     or want_grade in compact(str(it.get("name") or ""))
                 )))
         elif fam in ("drill", "mill", "reamer"):
+            if fam == "mill" and q.compat_insert:
+                out.append(("под пластину", True, lambda it: self._mill_fits(it, q)))
             if a.get("diameter_mm"):
                 tol = 0.06 if a["diameter_mm"] < 10 else 0.11
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], tol)))
@@ -649,10 +789,12 @@ class CatalogSearchEngine:
             if a.get("tap_kind"):
                 out.append(("исполнение", False, lambda it: (it["attrs"].get("tap_kind") or "") == a["tap_kind"]))
         elif fam == "holder":
+            if q.compat_insert:
+                out.append(("под пластину", True, lambda it: self._holder_fits(it, q)))
             if q.holder_code:
                 out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
             if a.get("shank_mm"):
-                out.append(("хвостовик", True, lambda it: self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
+                out.append(("сечение", True, lambda it: self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
         elif fam == "countersink":
             if a.get("diameter_mm"):
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.2)))
@@ -686,6 +828,29 @@ class CatalogSearchEngine:
         if q.category_hints:
             out.append(("тип", True, lambda it: it.get("category") in q.category_hints))
         return out
+
+    @staticmethod
+    def _holder_fits(it: Dict[str, Any], q: Query) -> bool:
+        info = it.get("_insert_compat")
+        if not info:
+            return False
+        if info.get("shape") != q.compat_shape:
+            return False
+        if q.compat_clearance and info.get("clearance") != q.compat_clearance:
+            return False
+        if q.compat_size and info.get("size") != q.compat_size:
+            return False
+        return True
+
+    @staticmethod
+    def _mill_fits(it: Dict[str, Any], q: Query) -> bool:
+        want = (q.compat_insert or "").upper()
+        if not want:
+            return False
+        for code in it.get("_mill_inserts") or []:
+            if code.startswith(want) or want.startswith(code):
+                return True
+        return False
 
     @staticmethod
     def _int_eq(value: Any, want: Any) -> bool:
@@ -726,9 +891,13 @@ class CatalogSearchEngine:
 
     # ---- основной поиск --------------------------------------------------------------------------
     def search(self, text: str, limit: int = 8, in_stock_only: bool = True) -> Dict[str, Any]:
-        q = Query(text)
+        q = Query(text, self._insert_prefixes)
         if q.insert_code:
             q.insert_code = self._canonical_insert_code(q.insert_code)
+        if q.compat_insert:
+            fixed = self._canonical_insert_code(q.compat_insert)
+            if fixed != q.compat_insert:
+                q._set_compat(fixed)
         if q.family is None:
             return self._search_ambiguous(q, limit, in_stock_only)
         return self._search_family(q, q.family, limit, in_stock_only)
@@ -775,6 +944,14 @@ class CatalogSearchEngine:
             results = self._collect(pool, q, hard, soft, False, fam)
             if results:
                 availability = "нет в наличии — показаны позиции под заказ"
+        nearest = []
+        if not results and fam == "mill" and q.compat_insert and q.attrs.get("diameter_mm"):
+            # для корпусов под пластину ближайший диаметр полезнее, чем ослабление совместимости
+            guard = [f for n, f in hard if n != "диаметр"] + [f for n, f in soft]
+            nearest = self._nearest_diameter(pool, q.attrs["diameter_mm"], fam, q, limit, guard)
+            if nearest:
+                relaxed.append(f"точного диаметра нет — показан ближайший к {fmt_num(q.attrs['diameter_mm'])} мм")
+                results = nearest
         if not results:
             active_soft = list(soft)
             active_hard = list(hard)
@@ -798,7 +975,6 @@ class CatalogSearchEngine:
         code_level = 0
         if q.insert_code or q.holder_code:
             code_level = max((self._code_match(it, q.insert_code or q.holder_code or "")[0] for it, _ in results), default=0)
-        nearest = []
         if not results and fam in ("drill", "mill", "reamer", "countersink", "saw") and q.attrs.get("diameter_mm"):
             nearest = self._nearest_diameter(pool, q.attrs["diameter_mm"], fam, q, limit)
             if nearest:
@@ -833,6 +1009,8 @@ class CatalogSearchEngine:
             out["insert_code"] = q.insert_code
         if q.family == "holder" and q.holder_code:
             out["holder_code"] = q.holder_code
+        if q.compat_insert:
+            out["compatible_insert"] = q.compat_insert
         return out
 
     def _related_pool(self, fam: str) -> List[Dict[str, Any]]:
@@ -895,13 +1073,15 @@ class CatalogSearchEngine:
             uniq.append((it, score))
         return uniq
 
-    def _nearest_diameter(self, pool, want: float, fam: str, q: Query, limit: int):
+    def _nearest_diameter(self, pool, want: float, fam: str, q: Query, limit: int, guard=None):
         cands = []
         for it in pool:
             d = (it.get("attrs") or {}).get("diameter_mm")
             if d is None:
                 continue
             if it.get("stock", 0) <= 0:
+                continue
+            if guard and not all(f(it) for f in guard):
                 continue
             cands.append((abs(float(d) - want), it))
         if not cands:
@@ -946,6 +1126,8 @@ class CatalogSearchEngine:
             chips.append(f"код: {q.insert_code}")
         if q.holder_code:
             chips.append(f"код: {q.holder_code}")
+        if q.compat_insert:
+            chips.append(f"под пластину: {q.compat_insert}")
         if a.get("diameter_mm") and (not q.thread or a.get("tap_drill_for")):
             chips.append(f"диаметр: {fmt_num(a['diameter_mm'])} мм")
         if q.thread:
@@ -956,7 +1138,12 @@ class CatalogSearchEngine:
             chips.append(f"длина: {a['ld_ratio']}D")
         if a.get("angle_deg"):
             chips.append(f"угол: {fmt_num(a['angle_deg'])}°")
-        if a.get("shank_mm"):
+        if a.get("shank_section"):
+            sec = str(a["shank_section"])
+            if "×" not in sec:
+                sec = f"{sec[:2]}×{sec[2:]}"
+            chips.append(f"сечение: {sec} мм")
+        elif a.get("shank_mm"):
             chips.append(f"хвостовик: {fmt_num(a['shank_mm'])} мм")
         if a.get("iso_group"):
             chips.append(f"группа ISO: {a['iso_group']}")
