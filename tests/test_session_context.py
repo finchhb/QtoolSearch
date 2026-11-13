@@ -54,6 +54,17 @@ class EffectiveQueryTest(unittest.TestCase):
         q = "кулачки каленые к11 шаг 5"
         self.assertEqual(app.effective_query(self.sid, q), q)
 
+    def test_unknown_designation_does_not_inherit_previous_query(self):
+        # «MTA2 велдон 10» после «расточная s20 под dcmt» отдавал те же 9 позиций
+        app.SESSIONS.put(self.sid, last_q="расточная s20 под dcmt", decision="site_search")
+        for q in ("MTA2 велдон 10", "SK40", "HSK63", "ER32", "конус морзе 2"):
+            self.assertEqual(app.effective_query(self.sid, q), q)
+
+    def test_short_clarification_still_merges_after_unknown_words(self):
+        app.SESSIONS.put(self.sid, last_q="расточная s20 под dcmt", decision="site_search")
+        self.assertEqual(app.effective_query(self.sid, "под хвостовик 20"),
+                         "расточная s20 под dcmt. под хвостовик 20")
+
 
 if __name__ == "__main__":
     unittest.main()

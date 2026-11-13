@@ -658,47 +658,69 @@ _RE_HOLDER_MENTION = re.compile(r"\bдержавк[а-яё]*\b", re.I)
 _RE_PAREN_INSERT = re.compile(r"\(([A-Z]{2,5}\d{2,4})")
 
 
-def _topic_stems(patterns: Iterable[str]) -> List[str]:
-    """Кириллические основы названий групп: «сверл[а-яё]*» -> «сверл»."""
-    stems: List[str] = []
-    for pat in patterns:
-        for stem in re.findall(r"[А-Яа-яЁё]{2,}", re.sub(r"\[[^\]]*\]", " ", pat)):
-            stem = stem.lower()
-            if stem not in stems:
-                stems.append(stem)
-    return stems
-
-
-# Названия групп словами. Короткие уточнения в диалоге («12», «под CNMG12», «чистовая»)
-# группу не называют — их надо дополнять предыдущим запросом. Список выводится из
-# FAMILY_KEYWORDS: иначе при расширении словаря новые группы («кулачки», «тиски»)
-# не считались бы самостоятельным запросом и склеивались с предыдущим.
-_RE_FAMILY_TOPIC = re.compile(
-    r"\b(?:" + "|".join(_topic_stems(p for _, p in FAMILY_KEYWORDS) + [r"sbha"]) + r")", re.I
+# «под хвостовик 20»: размер назван, но после «под» — значит, это ограничение
+# к предыдущему запросу, а не новый инструмент.
+_RE_UNDER_SIZE = re.compile(
+    r"\bпод\s+(?:мм\s+)?(?:хвост[а-яё]*|сечени[а-яё]*|диаметр[а-яё]*|хв\.?)", re.I
 )
-# Явный размер инструмента: «хвостовик 20 мм», «сечение 25 на 25», «диаметр 8,5».
-_RE_EXPLICIT_SIZE = re.compile(r"\b(?:хвостовик|сечени|диаметр)", re.I)
-_RE_UNDER_WORD = re.compile(r"\bпод\s+$", re.I)
+# «под пластину DNMG15»: само слово «пластина» — часть уточнения, а не запрос «пластины».
+_RE_UNDER_PLATE = re.compile(r"\bпод\s+пластин[а-яё]*", re.I)
+# Замкнутый набор слов-уточнителей: служебные слова и прилагательные вида обработки.
+# Только словоформы: голые основы («расточн») — не слова и не уточнение.
+_ADJ_TAIL = r"(?:ая|яя|ое|ее|ой|ей|ою|ею|ую|юю|ые|ие|ых|их|ым|им|ыми|ими|ом|ем|ый|ий|ого|его|ому|ему)"
+_CLARIFY_ADJ = (
+    "чистов", "получистов", "чернов", "наружн", "внутренн", "расточн", "канавочн",
+    "резьбов", "проходн", "подрезн", "торцев", "торцов", "концев", "дисков",
+    "сферическ", "радиусн", "лев", "прав", "сменн",
+)
+_RE_CLARIFY_WORD = re.compile(
+    r"(?:" + "|".join(["под", "для", "по", "мм", r"обработк[а-яё]*"]
+                      + [stem + _ADJ_TAIL for stem in _CLARIFY_ADJ]) + r")", re.I
+)
+_RE_NUMBER = re.compile(r"\d+(?:[.,]\d+)?(?:[xх]\d+(?:[.,]\d+)?)?")
+# Резьба: M10 — размер в уточнении. «S20»/«SK40» сюда не попадают: это обозначение инструмента.
+_RE_THREAD_SIZE = re.compile(r"m\d{1,4}(?:[.,]\d+)?", re.I)
+_RE_TOKEN = re.compile(r"[a-zа-яё0-9]+(?:[.,][0-9]+)*(?:[xх][0-9]+(?:[.,][0-9]+)*)?")
+
+
+def is_clarification(text: str, insert_prefixes: Optional[Iterable[str]] = None) -> bool:
+    """Уточнение к предыдущему запросу: «12», «под CNMG12», «чистовая», «под хвостовик 20».
+
+    Уточнения — замкнутый набор: число, слово-уточнитель, известный код пластины.
+    Всё незнакомое («MTA2 велдон 10», «SK40», «HSK63», «ER32») — новый запрос, даже если
+    короткое: иначе сообщение со своим обозначением склеивалось с предыдущей выдачей
+    и повторяло её.
+    """
+    low = (text or "").lower().replace("ё", "е").strip()
+    if not low:
+        return True
+    known = {p.upper() for p in (insert_prefixes or ())} | _COMMON_INSERT_PREFIXES
+    # «под CNMG12» / «под APMT1604» — уточнение: код после «под» снимаем с проверки на полноту
+    rest = _RE_UNDER_INSERT.sub(
+        lambda m: " под " if insert_prefix_from_word(m.group(1), known) in known else m.group(0), low
+    )
+    rest = _RE_UNDER_SIZE.sub(" под ", rest)
+    rest = _RE_UNDER_PLATE.sub(" под ", rest)
+    code = insert_code_from_text(rest)
+    if code:
+        return False  # полный код пластины («CNMG 120408») — самостоятельный запрос
+    if holder_code_from_text(rest):
+        return False  # структурно полный код оснастки («PCLNR 2525M12», «MCBNR2020»)
+    for tok in _RE_TOKEN.findall(rest):
+        if _RE_NUMBER.fullmatch(tok) or _RE_THREAD_SIZE.fullmatch(tok) or _RE_CLARIFY_WORD.fullmatch(tok):
+            continue
+        # короткий известный префикс пластины: «cnmg12», «cnmg» — уточнение,
+        # полный размер в префиксном разборе уже отсечён выше
+        head = re.fullmatch(r"([a-zа-яё]{2,6})(\d*)", tok)
+        if head and insert_prefix_from_word(head.group(1), known) in known and len(head.group(2)) < 4:
+            continue
+        return False
+    return True
 
 
 def is_self_contained_query(text: str) -> bool:
-    """«метчик M10», «державка 2020 под CNMG12», «mcbnr 2020» — новый запрос, а не уточнение.
-
-    Уточнения («12», «под CNMG12», «чистовая», «под пластину DNMG15») группу и код не задают.
-    """
-    topic = _RE_UNDER_INSERT.sub(" ", text or "")
-    low = topic.lower()
-    if _RE_FAMILY_TOPIC.search(low):
-        return True
-    # Явный размер в фразе из трёх слов и более — новый запрос, а не уточнение.
-    # «под хвостовик 20» размер не задаёт: это уточнение к предыдущему запросу.
-    size_hits = [m for m in _RE_EXPLICIT_SIZE.finditer(low) if not _RE_UNDER_WORD.search(low[:m.start()])]
-    if size_hits and len(topic.split()) >= 3:
-        return True
-    q = Query(topic)
-    # «M10» даёт holder_code, но это размер резьбы в уточнении, а не код оснастки;
-    # holder_code теперь бывает только структурно полным кодом ISO 5608
-    return bool(q.insert_code or q.holder_code or "tool_holder" in q.category_hints)
+    """«метчик M10», «державка 2020 под CNMG12», «mcbnr 2020» — новый запрос, а не уточнение."""
+    return not is_clarification(text)
 
 
 def mill_insert_codes(name: str) -> List[str]:

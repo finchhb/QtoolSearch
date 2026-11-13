@@ -116,8 +116,22 @@ class SelfContainedQueryTest(unittest.TestCase):
             self.assertFalse(is_self_contained_query(q), q)
 
     def test_clarifications_are_not_self_contained(self):
-        for q in ("12", "под CNMG12", "под пластину DNMG15", "чистовая", "M10", "cnmg12"):
+        for q in ("12", "8,5", "25х25", "под CNMG12", "под APMT1604", "под пластину DNMG15",
+                  "под dcmt пластину", "чистовая", "получистовая", "черновая", "наружная",
+                  "внутренняя", "под сечение 25", "M10", "cnmg12"):
             self.assertFalse(is_self_contained_query(q), q)
+
+    def test_unknown_designation_is_self_contained(self):
+        # «MTA2 велдон 10» после «расточная s20 под dcmt» склеивался и повторял выдачу:
+        # незнакомое обозначение — новый запрос, даже если сообщение короткое
+        for q in ("MTA2 велдон 10", "SK40", "BT40", "HSK63", "ER32", "MK2",
+                  "DIN 69871 40", "конус морзе 2", "SBHA32 20", "расточная s20 под dcmt"):
+            self.assertTrue(is_self_contained_query(q), q)
+
+    def test_unknown_word_next_to_known_code_is_self_contained(self):
+        # известный код не делает уточнением сообщение со своим словом
+        for q in ("велдон под cnmg12", "MTA2 под 20"):
+            self.assertTrue(is_self_contained_query(q), q)
 
     def test_jaw_query_is_not_a_clarification(self):
         # «кулачки…» после запроса про держатели раньше склеивалось и повторяло выдачу
