@@ -7,6 +7,7 @@ from src.catalog_search import (
     clamp_accepts_hole,
     holder_insert_compat,
     insert_compat_key,
+    is_self_contained_query,
 )
 from src.clarification_advisor import ClarificationAdvisor
 from src.engine import ToolAdvisorEngine
@@ -74,6 +75,22 @@ ITEMS = [
     item("accessory", "collet", "Цанга ER32 16 мм", sku="ER32-16",
          collet_series="ER32", clamp_range="2-16"),
 ]
+
+
+class SelfContainedQueryTest(unittest.TestCase):
+    """Сообщение с группой или кодом оснастки — новый запрос, а не уточнение к предыдущему."""
+
+    def test_group_message_is_self_contained(self):
+        for q in ("метчик М10", "державка 2020 под CNMG12", "фреза под пластину", "сверло 8,5 мм"):
+            self.assertTrue(is_self_contained_query(q), q)
+
+    def test_code_message_is_self_contained(self):
+        for q in ("mcbnr 2020", "MCBNR2020", "PCLNR 2525M12", "CNMG 120408"):
+            self.assertTrue(is_self_contained_query(q), q)
+
+    def test_clarifications_are_not_self_contained(self):
+        for q in ("12", "под CNMG12", "под пластину DNMG15", "чистовая", "M10", "cnmg12"):
+            self.assertFalse(is_self_contained_query(q), q)
 
 
 class CatalogSearchTest(unittest.TestCase):

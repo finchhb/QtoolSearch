@@ -31,6 +31,7 @@ from src.llm_client import load_env_file
 load_env_file()  # .env читаем ДО остальных модулей: от него зависят режим, токен и фильтры
 
 from src import training  # noqa: E402
+from src.catalog_search import is_self_contained_query  # noqa: E402
 from src.engine import ToolAdvisorEngine  # noqa: E402
 from src.materials_mapping import detect_iso_group  # noqa: E402
 from src.ui import ADMIN_HTML, CHAT_HTML  # noqa: E402
@@ -157,7 +158,10 @@ def effective_query(sid: str, q: str) -> str:
     if not prev or not prev.get("last_q"):
         return q
     words = len(re.findall(r"\w+", q))
-    if words > 8 or "\n" in q or INSERT_CODE_RE.search(q.upper()) or re.search(r"аналог|замен|кросс|вместо", q.lower()):
+    # Самостоятельный запрос не дополняем предыдущим: иначе «державка 2020 под CNMG12»
+    # после «под DNMG15» уходила в пластины DNMG15, а «mcbnr 2020» — в TNMG16.
+    if (words > 8 or "\n" in q or INSERT_CODE_RE.search(q.upper()) or is_self_contained_query(q)
+            or re.search(r"аналог|замен|кросс|вместо", q.lower())):
         return q
     if prev.get("decision") == "clarification_branch" or not detect_iso_group(q):
         return (prev["last_q"] + ". " + q)[: MAX_QUERY_LEN * 2]

@@ -590,6 +590,26 @@ _RE_UNDER_INSERT = re.compile(
 _RE_COMPAT_PHRASE = re.compile(r"\bпод\s+пластин[а-яё]*\b", re.I)
 _RE_HOLDER_MENTION = re.compile(r"\bдержавк[а-яё]*\b", re.I)
 _RE_PAREN_INSERT = re.compile(r"\(([A-Z]{2,5}\d{2,4})")
+# Названия групп словами. Короткие уточнения в диалоге («12», «под CNMG12», «чистовая»)
+# группу не называют — их надо дополнять предыдущим запросом.
+_RE_FAMILY_TOPIC = re.compile(
+    r"\b(?:пластин|сверл|фрез|борфрез|метчик|раскатник|плашк|разверт|зенков|зенкер|"
+    r"фаскосним|гратосним|державк|борштанг|резец|резц|минирез|оправк|расточн|"
+    r"цанг|патрон|винт|гайк|ключ|пил)", re.I
+)
+
+
+def is_self_contained_query(text: str) -> bool:
+    """«метчик M10», «державка 2020 под CNMG12», «mcbnr 2020» — новый запрос, а не уточнение.
+
+    Уточнения («12», «под CNMG12», «чистовая», «под пластину DNMG15») группу и код не задают.
+    """
+    topic = _RE_UNDER_INSERT.sub(" ", text or "")
+    if _RE_FAMILY_TOPIC.search(topic.lower()):
+        return True
+    q = Query(topic)
+    # «M10» даёт holder_code, но это размер резьбы в уточнении, а не код оснастки
+    return bool(q.insert_code or (q.holder_code and parse_holder_code(q.holder_code)))
 
 
 def mill_insert_codes(name: str) -> List[str]:
