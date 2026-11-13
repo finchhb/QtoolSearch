@@ -239,6 +239,19 @@ CATEGORY_HINTS = {
         ("pipe_tap", r"трубн|\bG\d"),
         ("machine_tap", r"машинн|метрич|сквозн|гаечн"),
     ],
+    "holder": [
+        ("holder_internal", r"расточн|борштанг|внутренн"),
+        ("holder_grooving", r"канавочн|канавк|отрезн"),
+        ("holder_threading", r"резьбов"),
+        ("holder_external", r"наружн|проходн|подрезн"),
+    ],
+}
+
+HOLDER_CATEGORY_TITLES = {
+    "holder_internal": "расточная",
+    "holder_external": "наружная",
+    "holder_grooving": "канавочная",
+    "holder_threading": "резьбовая",
 }
 
 
@@ -426,9 +439,11 @@ class Query:
         if r:
             self.attrs["radius_mm"] = float(r.group(1).replace(",", "."))
 
-        m = re.search(r"хв\.?\s*(\d+(?:[.,]\d+)?)", low)
+        m = re.search(r"(?:хв\.?\s*|хвост[а-яё]*\s*)(\d{1,3}(?:[.,]\d+)?)(?!\d)", low)
         if m:
-            self.attrs["shank_mm"] = float(m.group(1).replace(",", "."))
+            val = float(m.group(1).replace(",", "."))
+            if 1 <= val <= 200:
+                self.attrs["shank_mm"] = val
 
         dims = _dims(self.text)
         if self.family == "holder" and "shank_mm" not in self.attrs:
@@ -561,6 +576,7 @@ def holder_insert_compat(code: Optional[str]) -> Optional[Dict[str, Any]]:
         "clearance": info.get("clearance"),
         "size": info.get("insert_size"),
         "shank_mm": info.get("shank_mm"),
+        "shank_diameter_mm": info.get("shank_diameter_mm"),
         "clamp": info.get("clamp"),
         "kind": info.get("kind"),
         "series_key": info.get("series_key"),
@@ -667,7 +683,13 @@ class CatalogSearchEngine:
                 info = holder_insert_compat(str(attrs.get("holder_code") or it.get("sku") or ""))
                 if info:
                     it["_insert_compat"] = info
-                    if info.get("shank_mm") and not attrs.get("shank_mm"):
+                    dia = info.get("shank_diameter_mm")
+                    if dia:
+                        # расточная державка: хвост круглый, диаметр из кода точнее разбора названия
+                        attrs["shank_mm"] = dia
+                        attrs["shank_diameter_mm"] = dia
+                        attrs.pop("shank_section", None)
+                    elif info.get("shank_mm") and not attrs.get("shank_mm"):
                         attrs["shank_mm"] = info["shank_mm"]
                         side = int(info["shank_mm"])
                         attrs.setdefault("shank_section", f"{side}×{side}")
@@ -854,7 +876,14 @@ class CatalogSearchEngine:
             if q.holder_code:
                 out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
             if a.get("shank_mm"):
-                out.append(("сечение", True, lambda it: self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
+                if self._round_shank(q):
+                    # «расточная державка с хвостом 25»: сравниваем диаметр круглого хвоста
+                    out.append(("диаметр хвоста", True, lambda it: self._near(
+                        it["attrs"].get("shank_diameter_mm"), a["shank_mm"], 0.5)))
+                else:
+                    out.append(("сечение", True, lambda it: (
+                        not it["attrs"].get("shank_diameter_mm")
+                        and self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5))))
         elif fam == "countersink":
             if a.get("diameter_mm"):
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.2)))
@@ -888,6 +917,11 @@ class CatalogSearchEngine:
         if q.category_hints:
             out.append(("тип", True, lambda it: it.get("category") in q.category_hints))
         return out
+
+    @staticmethod
+    def _round_shank(q: Query) -> bool:
+        """Расточная державка: хвост круглый, «сечение 25×25» к ней не относится."""
+        return "holder_internal" in q.category_hints
 
     @staticmethod
     def _holder_fits(it: Dict[str, Any], q: Query) -> bool:
@@ -1135,6 +1169,7 @@ class CatalogSearchEngine:
             "query": q.text, "family": fam, "groups": [], "products": products,
             "parsed": dict(q.attrs), "chips": self._chips(q, fam), "level": level,
             "total_found": len(results), "relaxations": relaxed, "follow_ups": follow,
+            "category_hints": list(q.category_hints),
         }
         if availability:
             out["availability"] = availability
@@ -1261,6 +1296,10 @@ class CatalogSearchEngine:
         chips = []
         if fam:
             chips.append(f"группа: {FAMILY_TITLES.get(fam, fam)}")
+        for cat in q.category_hints:
+            title = HOLDER_CATEGORY_TITLES.get(cat)
+            if title:
+                chips.append(f"тип: {title}")
         a = q.attrs
         if q.insert_code:
             chips.append(f"код: {q.insert_code}")
@@ -1286,7 +1325,10 @@ class CatalogSearchEngine:
                 sec = f"{sec[:2]}×{sec[2:]}"
             chips.append(f"сечение: {sec} мм")
         elif a.get("shank_mm"):
-            chips.append(f"хвостовик: {fmt_num(a['shank_mm'])} мм")
+            if self._round_shank(q):
+                chips.append(f"хвост: Ø{fmt_num(a['shank_mm'])} мм")
+            else:
+                chips.append(f"хвостовик: {fmt_num(a['shank_mm'])} мм")
         if a.get("iso_group"):
             chips.append(f"группа ISO: {a['iso_group']}")
         if a.get("operation"):
@@ -1330,7 +1372,10 @@ class CatalogSearchEngine:
                 tips.append("Укажите резьбу: например М10х1,5.")
         elif fam == "holder":
             if not q.holder_code and not a.get("shank_mm"):
-                tips.append("Укажите сечение державки (16х16, 20х20, 25х25) или её код.")
+                if self._round_shank(q):
+                    tips.append("Укажите диаметр хвоста (16, 20, 25 мм) или код державки.")
+                else:
+                    tips.append("Укажите сечение державки (16х16, 20х20, 25х25) или её код.")
         elif fam == "insert":
             if not q.insert_code and not q.holder_compat:
                 tips.append("Укажите код пластины (например CNMG 120408) или форму и размер.")

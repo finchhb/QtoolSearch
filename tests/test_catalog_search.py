@@ -81,7 +81,8 @@ class SelfContainedQueryTest(unittest.TestCase):
     """Сообщение с группой или кодом оснастки — новый запрос, а не уточнение к предыдущему."""
 
     def test_group_message_is_self_contained(self):
-        for q in ("метчик М10", "державка 2020 под CNMG12", "фреза под пластину", "сверло 8,5 мм"):
+        for q in ("метчик М10", "державка 2020 под CNMG12", "фреза под пластину", "сверло 8,5 мм",
+                  "расточная державка с хвостом 25 под cnmg12"):
             self.assertTrue(is_self_contained_query(q), q)
 
     def test_code_message_is_self_contained(self):
@@ -309,6 +310,46 @@ class HolderCodeParsingTest(unittest.TestCase):
         q = Query("CNMG 12 04 08")
         self.assertEqual(q.family, "insert")
         self.assertEqual(q.insert_code, "CNMG120408")
+
+
+class HolderSubgroupTest(unittest.TestCase):
+    """Слова запроса задают подгруппу державки: «расточная» — внутренние, «хвост 25» — диаметр."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_boring_word_selects_internal_holders(self):
+        q = Query("расточная державка под пластину CCMT1204")
+        self.assertEqual(q.category_hints, ["holder_internal"])
+
+    def test_round_shank_query_returns_boring_holder(self):
+        res = self.engine.search("расточная державка с хвостом 16 под CCMT1204")
+        self.assertEqual([p["sku"] for p in res["products"]], ["S16Q-SCLCR-12"])
+        self.assertIn("тип: расточная", res["chips"])
+        self.assertIn("хвост: Ø16 мм", res["chips"])
+
+    def test_square_section_query_skips_boring_bars(self):
+        res = self.engine.search("державка 2020 под CNMG1204")
+        self.assertEqual({p["category"] for p in res["products"]}, {"holder_external"})
+        self.assertIn("сечение: 20×20 мм", res["chips"])
+
+    def test_shank_phrase_forms(self):
+        for text in ("державка хв. 25", "державка с хвостом 25", "державка хвостовиком 25"):
+            self.assertEqual(Query(text).attrs.get("shank_mm"), 25.0, text)
+
+    def test_boring_bar_exposes_shank_diameter_not_section(self):
+        res = self.engine.search("расточная державка под пластину CCMT1204")
+        attrs = res["products"][0]["attrs"]
+        self.assertEqual(attrs.get("shank_diameter_mm"), 16.0)
+        self.assertNotIn("shank_section", attrs)
+        self.assertEqual(res["category_hints"], ["holder_internal"])
+
+    def test_boring_follow_up_asks_for_shank_diameter(self):
+        res = self.engine.search("расточная державка 25")
+        tips = " ".join(res["follow_ups"])
+        self.assertIn("диаметр хвоста", tips)
+        self.assertNotIn("сечение державки", tips)
 
 
 class ClampHoleTest(unittest.TestCase):

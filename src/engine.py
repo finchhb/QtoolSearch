@@ -749,7 +749,8 @@ class ToolAdvisorEngine:
     }
     _SITE_ATTR_FMT = (
         ("diameter_mm", "Ø {} мм"), ("bore_mm", "посадочное Ø {} мм"),
-        ("shank_section", "сечение {} мм"), ("shank_mm", "хвостовик {} мм"),
+        ("shank_section", "сечение {} мм"), ("shank_diameter_mm", "хвост Ø {} мм"),
+        ("shank_mm", "хвостовик {} мм"),
         ("length_mm", "длина {} мм"), ("cutting_length_mm", "раб. длина {} мм"),
         ("thickness_mm", "толщина {} мм"), ("width_mm", "ширина {} мм"),
         ("teeth", "зубьев {}"), ("thread", "резьба {}"), ("pitch_mm", "шаг {} мм"),
@@ -877,7 +878,7 @@ class ToolAdvisorEngine:
             value = attrs.get(key)
             if value in (None, "", []):
                 continue
-            if key == "shank_mm" and attrs.get("shank_section"):
+            if key == "shank_mm" and (attrs.get("shank_section") or attrs.get("shank_diameter_mm")):
                 continue
             if key == "operation":
                 value = self._OP_NAMES.get(value, value)
@@ -952,6 +953,8 @@ class ToolAdvisorEngine:
             fam = res.get("family")
             if fam:
                 what = {"holder": "державки", "mill": "корпуса фрез"}.get(fam, "инструмент")
+                if fam == "holder" and "holder_internal" in (res.get("category_hints") or []):
+                    what = "расточные державки"
                 lines.append(f"**Подбор под пластину {res['compatible_insert']}:** показаны {what}, которые с ней совместимы.\n")
             else:
                 titles = [self._SITE_FAMILY_TITLES.get(g.get("family")) for g in (res.get("groups") or []) if g.get("products")]
