@@ -60,6 +60,8 @@ ITEMS = [
          sku="SCLCR2525M12", holder_code="SCLCR2525M12"),
     item("holder", "holder_internal", "S16Q-SCLCR-12-M-A Державка расточная",
          sku="S16Q-SCLCR-12", holder_code="S16Q-SCLCR-12-M-A"),
+    item("holder", "holder_internal", "S20R-SDUCR11 Державка расточная",
+         sku="S20R-SDUCR11", holder_code="S20R-SDUCR11"),
     item("mill", "face_mill", "BAP 400R 63-22-4T под APMT1604** корпусная фреза",
          sku="BAP400R-63", diameter_mm=63.0, bore_mm=22.0, teeth=4),
     item("mill", "face_mill", "BAP 400R 125-40-7T под APMT1604** корпусная фреза",
@@ -350,6 +352,25 @@ class HolderSubgroupTest(unittest.TestCase):
         tips = " ".join(res["follow_ups"])
         self.assertIn("диаметр хвоста", tips)
         self.assertNotIn("сечение державки", tips)
+
+    def test_plate_word_after_under_insert_keeps_holder_family(self):
+        # «под dcmt пластину»: оставшееся слово «пластину» не должно уводить запрос в пластины
+        q = Query("державка расточная, S20, под dcmt пластину")
+        self.assertEqual(q.family, "holder")
+        self.assertEqual(q.compat_insert, "DCMT")
+        self.assertEqual(q.category_hints, ["holder_internal"])
+        self.assertEqual(q.attrs.get("shank_mm"), 20.0)
+
+    def test_shank_letter_prefix_is_not_a_holder_code(self):
+        # S20 — обозначение хвоста, а не код державки: чип «код: S20» вводит в заблуждение
+        q = Query("державка расточная, S20, под dcmt пластину")
+        self.assertIsNone(q.holder_code)
+
+    def test_dcmt_boring_query_returns_shank_20(self):
+        res = self.engine.search("державка расточная, S20, под dcmt пластину")
+        self.assertEqual([p["sku"] for p in res["products"]], ["S20R-SDUCR11"])
+        self.assertIn("хвост: Ø20 мм", res["chips"])
+        self.assertNotIn("код: S20", res["chips"])
 
 
 class ClampHoleTest(unittest.TestCase):

@@ -280,6 +280,7 @@ class Query:
         self.holder_compat: Optional[Dict[str, Any]] = None
         self.holder_compat_code: Optional[str] = None
         self.holder_compat_requested = False
+        self.shank_round = False
         self._insert_prefixes = insert_prefixes or set()
         self._parse()
 
@@ -291,6 +292,8 @@ class Query:
         under = self._parse_compat_insert()
         if under:
             code_text = (self.text[:under[0]] + " " + self.text[under[1]:]).strip()
+            # «под dcmt пластину»: хвост фразы не должен уводить запрос в группу пластин
+            code_text = _RE_PLATE_WORD.sub(" ", code_text).strip()
         elif _RE_COMPAT_PHRASE.search(code_text):
             # «фреза под пластину» без кода: фраза не должна уводить запрос в группу пластин
             code_text = _RE_COMPAT_PHRASE.sub(" ", code_text).strip()
@@ -444,6 +447,15 @@ class Query:
             val = float(m.group(1).replace(",", "."))
             if 1 <= val <= 200:
                 self.attrs["shank_mm"] = val
+
+        if self.family == "holder" and "shank_mm" not in self.attrs:
+            # «державка расточная S20»: буква типа хвоста и диаметр, как в начале кода ISO 5608
+            m = re.search(r"(?<![A-Za-zА-Яа-яЁё0-9])[SCEHСЕН](\d{2})(?![A-Za-zА-Яа-яЁё0-9])", code_text, re.I)
+            if m and 8 <= int(m.group(1)) <= 50:
+                if compact(self.holder_code or "") == compact(m.group(0)):
+                    self.holder_code = None  # «S20» — обозначение хвоста, а не полный код державки
+                self.attrs["shank_mm"] = float(m.group(1))
+                self.shank_round = True
 
         dims = _dims(self.text)
         if self.family == "holder" and "shank_mm" not in self.attrs:
@@ -604,6 +616,7 @@ _RE_UNDER_INSERT = re.compile(
     r"(?<![A-Za-zА-Яа-яЁё])под\s+(?:пластин[а-яё]*\s+)?([A-Za-zА-Яа-яЁё]{2,6})\s*(\d{2,6}(?:[A-Z]\d{2,4})*)?", re.I
 )
 _RE_COMPAT_PHRASE = re.compile(r"\bпод\s+пластин[а-яё]*\b", re.I)
+_RE_PLATE_WORD = re.compile(r"\bпластин[а-яё]*\b", re.I)
 _RE_HOLDER_MENTION = re.compile(r"\bдержавк[а-яё]*\b", re.I)
 _RE_PAREN_INSERT = re.compile(r"\(([A-Z]{2,5}\d{2,4})")
 # Названия групп словами. Короткие уточнения в диалоге («12», «под CNMG12», «чистовая»)
@@ -921,7 +934,7 @@ class CatalogSearchEngine:
     @staticmethod
     def _round_shank(q: Query) -> bool:
         """Расточная державка: хвост круглый, «сечение 25×25» к ней не относится."""
-        return "holder_internal" in q.category_hints
+        return bool(q.shank_round) or "holder_internal" in q.category_hints
 
     @staticmethod
     def _holder_fits(it: Dict[str, Any], q: Query) -> bool:
