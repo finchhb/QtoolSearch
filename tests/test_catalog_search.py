@@ -1,7 +1,7 @@
 """Детерминированный поиск по каталогу qtool.ru на синтетическом наборе всех групп."""
 import unittest
 
-from src.catalog_search import CatalogSearchEngine
+from src.catalog_search import CatalogSearchEngine, holder_insert_compat
 from src.clarification_advisor import ClarificationAdvisor
 from src.engine import ToolAdvisorEngine
 
@@ -51,6 +51,8 @@ ITEMS = [
          sku="MCLNR2020K12", holder_code="MCLNR2020K12"),
     item("holder", "holder_external", "SCLCR2525M12 Державка для наружного точения",
          sku="SCLCR2525M12", holder_code="SCLCR2525M12"),
+    item("holder", "holder_internal", "S16Q-SCLCR-12-M-A Державка расточная",
+         sku="S16Q-SCLCR-12", holder_code="S16Q-SCLCR-12-M-A"),
     item("mill", "face_mill", "BAP 400R 63-22-4T под APMT1604** корпусная фреза",
          sku="BAP400R-63", diameter_mm=63.0, bore_mm=22.0, teeth=4),
     item("mill", "face_mill", "BAP 400R 125-40-7T под APMT1604** корпусная фреза",
@@ -181,6 +183,66 @@ class CatalogSearchTest(unittest.TestCase):
         res = self.engine.search("фреза под APMT1604")
         skus = {p["sku"] for p in res["products"]}
         self.assertEqual(skus, {"BAP400R-63", "BAP400R-125"})
+
+    def test_holder_under_insert_phrase(self):
+        res = self.engine.search("державка 2525 под пластину CNMG1204")
+        self.assertEqual(res["family"], "holder")
+        self.assertEqual(res["compatible_insert"], "CNMG1204")
+        skus = {p["sku"] for p in res["products"]}
+        self.assertIn("PCLNR2525M12", skus)
+        self.assertNotIn("SCLCR2525M12", skus)
+
+    def test_mill_body_under_insert_phrase(self):
+        res = self.engine.search("корпус фрезы под пластину APMT1604")
+        self.assertEqual(res["family"], "mill")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"BAP400R-63", "BAP400R-125"})
+
+    def test_boring_holder_dashed_code(self):
+        info = holder_insert_compat("S16Q-SCLCR-12-M-A")
+        self.assertEqual((info["shape"], info["clearance"], info["size"]), ("C", "C", "12"))
+        res = self.engine.search("расточная державка под пластину CCMT1204")
+        self.assertIn("S16Q-SCLCR-12", {p["sku"] for p in res["products"]})
+        self.assertNotIn("PCLNR2525M12", {p["sku"] for p in res["products"]})  # задний угол N
+
+    def test_compat_without_group_shows_compatible_tools(self):
+        res = self.engine.search("под пластину CNMG1204")
+        self.assertIsNone(res["family"])
+        self.assertEqual(res["level"], "подбор")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"PCLNR2525M12", "MCLNR2020K12"})
+
+    def test_compat_phrase_without_code_asks_code(self):
+        res = self.engine.search("фреза под пластину")
+        self.assertEqual(res["family"], "mill")
+        self.assertIsNone(res.get("compatible_insert"))
+        self.assertEqual(res["products"], [])
+        self.assertTrue(any("код пластины" in tip for tip in res["follow_ups"]))
+
+    def test_compat_cyrillic_insert_prefix(self):
+        res = self.engine.search("фреза под пластину РПМТ1204")
+        self.assertEqual(res["family"], "mill")
+        self.assertEqual(res["compatible_insert"], "RPMT1204")
+
+    def test_insert_for_holder_reverse(self):
+        res = self.engine.search("пластина под державку MCLNR2020K12")
+        self.assertEqual(res["family"], "insert")
+        self.assertEqual(res["fits_holder"], "MCLNR2020K12")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"CNMG120408", "CNMG120412"})
+
+    def test_insert_for_holder_without_code_asks_code(self):
+        res = self.engine.search("пластина под державку")
+        self.assertEqual(res["level"], "уточните державку")
+        self.assertEqual(res["products"], [])
+
+    def test_insert_for_holder_without_insert_size_asks_code(self):
+        # MCLNR2525: 2525 — сечение хвостовика; размер пластины не задан
+        res = self.engine.search("пластина под державку MCLNR2525")
+        self.assertEqual(res["level"], "уточните державку")
+        self.assertEqual(res["products"], [])
+
+    def test_insert_code_with_holder_word_keeps_code_search(self):
+        res = self.engine.search("пластина CNMG120408 для державки")
+        self.assertEqual(res["insert_code"], "CNMG120408")
+        self.assertEqual([p["sku"] for p in res["products"]], ["CNMG120408"])
 
     def test_collet_series_and_clamp(self):
         res = self.engine.search("цанга ER32 12")

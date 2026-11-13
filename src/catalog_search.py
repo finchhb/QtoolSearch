@@ -89,7 +89,16 @@ def homoglyph_latin(s: str) -> str:
 
 
 def cyrillic_code_letters(s: str) -> str:
-    return "".join(_RU_CODE_LETTERS.get(ch, ch) for ch in s)
+    """Кириллица по буквам кода: «РПМТ» -> RPMT (регистр сохраняется)."""
+    out = []
+    for ch in s:
+        low = ch.lower()
+        if low in _RU_CODE_LETTERS:
+            tr = _RU_CODE_LETTERS[low]
+            out.append(tr.upper() if ch.isupper() else tr)
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def query_variants(q: str) -> List[str]:
@@ -127,6 +136,26 @@ _COMMON_INSERT_PREFIXES = {
     "RPMT", "RDMW", "RDMT", "LNMU", "LNMT", "SDMT", "EPNW", "WNMU",
     "MGMN", "ZQMX", "16ER", "16IR", "22ER", "22IR",
 }
+
+
+def insert_prefix_from_word(raw: str, known: Iterable[str] = ()) -> Optional[str]:
+    """«РПМТ», «APMT», «СТМН» -> латинский префикс пластины (или None).
+
+    Перебираем транслитерацию, транслитерацию после омоглифов и сами омоглифы:
+    «Р» транслитерируется в R, а как омоглиф — в P, и угадывать заранее нельзя.
+    """
+    cands: List[str] = []
+    for w in (cyrillic_code_letters(raw), cyrillic_code_letters(homoglyph_latin(raw)), homoglyph_latin(raw)):
+        w = w.upper()
+        if w not in cands:
+            cands.append(w)
+    for w in cands:
+        if re.fullmatch(r"[A-Z]{2,5}", w) and w[0] in _INSERT_SHAPES and (w in known or w in _COMMON_INSERT_PREFIXES):
+            return w
+    for w in cands:
+        if re.fullmatch(r"[A-Z]{2,5}", w) and w[0] in _INSERT_SHAPES:
+            return w
+    return None
 
 
 def insert_code_from_text(text: str) -> Optional[str]:
@@ -268,6 +297,10 @@ class Query:
         self.compat_shape: Optional[str] = None
         self.compat_clearance: Optional[str] = None
         self.compat_size: Optional[str] = None
+        self.compat_requested = False
+        self.holder_compat: Optional[Dict[str, Any]] = None
+        self.holder_compat_code: Optional[str] = None
+        self.holder_compat_requested = False
         self._insert_prefixes = insert_prefixes or set()
         self._parse()
 
@@ -279,7 +312,12 @@ class Query:
         under = self._parse_compat_insert()
         if under:
             code_text = (self.text[:under[0]] + " " + self.text[under[1]:]).strip()
-            low = code_text.lower().replace("ё", "е")
+        elif _RE_COMPAT_PHRASE.search(code_text):
+            # «фреза под пластину» без кода: фраза не должна уводить запрос в группу пластин
+            code_text = _RE_COMPAT_PHRASE.sub(" ", code_text).strip()
+        if under or _RE_COMPAT_PHRASE.search(self.text):
+            self.compat_requested = True
+        low = code_text.lower().replace("ё", "е")
         for fam, pattern in FAMILY_KEYWORDS:
             if re.search(pattern, low):
                 self.family = fam
@@ -288,11 +326,26 @@ class Query:
             if re.search(pattern, low):
                 self.category_hints.append(cat)
 
+        # Обратный подбор: «пластина под державку MCLNR2525M12» — какие пластины в неё ставятся.
+        # Код после слова «державка» — это код державки, а не пластины.
+        rev_holder = None
+        if self.family == "insert":
+            hm = _RE_HOLDER_MENTION.search(self.text)
+            if hm:
+                rev_holder = holder_code_from_text(self.text[hm.end():])
+                info = holder_insert_compat(rev_holder) if rev_holder else None
+                if rev_holder and info and info.get("size"):
+                    self.holder_compat_requested = True
+                    self.holder_code = rev_holder
+                    self.holder_compat = info
+                    self.holder_compat_code = rev_holder
+
         # коды: пробелы в записи кода не значимы (CNMG 12 04 08 = CNMG120408)
         if self.family in (None, "insert"):
-            for v in self.variants:
+            # после «под <пластина>» код уже ушёл в совместимость: группа по нему не определяется
+            for v in (query_variants(code_text) if under else self.variants):
                 code = insert_code_from_text(v)
-                if code:
+                if code and not compact(rev_holder or "").startswith(compact(code)):
                     self.insert_code = code
                     self.family = "insert"
                     break
@@ -307,10 +360,14 @@ class Query:
                         self.family = "holder"
                     break
 
+        # «пластина под державку» без кода: подбирать не под что, просим код державки.
+        if self.family == "insert" and not self.insert_code and _RE_HOLDER_MENTION.search(self.text):
+            self.holder_compat_requested = True
+
         if self.family == "insert":
             up = self.text.upper().replace("Ё", "Е")
             g = re.search(r"(?<![\w.])(\d{4}|[A-Z]{1,3}\d{3,4})(?![\w.])", up)
-            if g and not (self.insert_code and g.group(1) in self.insert_code):
+            if g and not (self.insert_code and g.group(1) in self.insert_code) and not self.holder_compat_requested:
                 self.attrs["grade"] = g.group(1)
             iso_g = re.search(r"(?<![\w.])([PMKNSH])\s?(\d{1,2})(?![\w.])", up)
             if iso_g:
@@ -436,7 +493,7 @@ class Query:
             self.attrs["diameter_mm"] = float(m.group(1).replace(",", "."))
 
         stop = {
-            "пластина", "пластины", "для", "под", "точения", "обработки", "нужна", "нужен", "подбери",
+            "пластина", "пластины", "пластину", "пластин", "пластиной", "для", "под", "точения", "обработки", "нужна", "нужен", "подбери",
             "посоветуй", "какой", "какая", "купить", "есть", "в", "наличии", "на", "складе", "мне",
             "надо", "хочу", "сверло", "сверла", "фреза", "фрезы", "метчик", "метчика", "державка",
             "державки", "мм", "шт", "цена", "стоимость", "сколько", "стоит", "с", "и", "или",
@@ -444,6 +501,9 @@ class Query:
         self.free_tokens = [t for t in tokenize(self.text) if t not in stop and len(t) > 1 and not re.fullmatch(r"\d+[.,]?\d*", t)]
         if self.compat_insert:
             self.free_tokens = [t for t in self.free_tokens if t != self.compat_insert.lower()]
+        if self.holder_compat_code:
+            hc = compact(self.holder_compat_code)
+            self.free_tokens = [t for t in self.free_tokens if compact(t) not in hc]
 
     def _parse_compat_insert(self) -> Optional[Tuple[int, int]]:
         """Фрагмент «под <код пластины>» -> поля совместимости; возвращает его границы."""
@@ -451,9 +511,9 @@ class Query:
             raw = m.group(1).lower().replace("ё", "е")
             if raw in {"резьбу", "резьбы", "пластину", "пластины", "пластин", "метчика", "метчик"}:
                 continue
-            word = cyrillic_code_letters(homoglyph_latin(m.group(1))).upper()
+            word = insert_prefix_from_word(m.group(1), self._insert_prefixes)
             digits = m.group(2) or ""
-            if not re.fullmatch(r"[A-Z]{2,5}", word) or word[0] not in _INSERT_SHAPES:
+            if not word:
                 continue
             if not digits and word not in self._insert_prefixes and word not in _COMMON_INSERT_PREFIXES:
                 continue
@@ -513,7 +573,7 @@ def holder_insert_hint(code: Optional[str]) -> Optional[str]:
 # Пять букв кода державки: зажим, форма, стиль, задний угол, рука (R/L/N),
 # затем сечение (2525), длина (M/K/P/H) и размер пластины (12/16).
 _HOLDER_CORE_RE = re.compile(
-    r"(?<![A-Z0-9])([A-Z])([A-Z])([A-Z])([A-Z])([LRN])(\d{2,4})?([A-Z])?(\d{2})(?![0-9])"
+    r"(?<![A-Z0-9])([A-Z])([A-Z])([A-Z])([A-Z])([LRN])(\d{2,4})?([A-Z])?[- ]?(\d{2})(?![0-9])"
 )
 
 
@@ -530,10 +590,18 @@ def holder_insert_compat(code: Optional[str]) -> Optional[Dict[str, Any]]:
         hi, lo = int(block[:2]), int(block[2:])
         if 8 <= hi <= 50 and 8 <= lo <= 50:
             shank = float(hi)
+    size = m.group(8)
+    # «MCLNR2525» / «MCLNR 2525»: цифры после букв — это сечение, а не размер пластины
+    rest = m.group(0)[5:].lstrip("- ")
+    if len(block) != 4 and not m.group(7) and re.fullmatch(r"(\d{2})\1", rest):
+        side = int(rest[:2])
+        if 8 <= side <= 50:
+            shank = float(side)
+        size = None
     return {
         "shape": m.group(2),
         "clearance": m.group(4),
-        "size": m.group(8),
+        "size": size,
         "shank_mm": shank,
     }
 
@@ -554,8 +622,10 @@ def insert_compat_key(code: Optional[str]) -> Dict[str, Any]:
 
 
 _RE_UNDER_INSERT = re.compile(
-    r"(?<![A-Za-zА-Яа-яЁё])под\s+([A-Za-zА-Яа-яЁё]{2,6})\s*(\d{2,6})?", re.I
+    r"(?<![A-Za-zА-Яа-яЁё])под\s+(?:пластин[а-яё]*\s+)?([A-Za-zА-Яа-яЁё]{2,6})\s*(\d{2,6}(?:[A-Z]\d{2,4})*)?", re.I
 )
+_RE_COMPAT_PHRASE = re.compile(r"\bпод\s+пластин[а-яё]*\b", re.I)
+_RE_HOLDER_MENTION = re.compile(r"\bдержавк[а-яё]*\b", re.I)
 _RE_PAREN_INSERT = re.compile(r"\(([A-Z]{2,5}\d{2,4})")
 
 
@@ -566,15 +636,18 @@ def mill_insert_codes(name: str) -> List[str]:
         raw = m.group(1).lower().replace("ё", "е")
         if raw in {"резьбу", "резьбы", "пластину", "пластины", "пластин", "метчика", "метчик"}:
             continue
-        word = cyrillic_code_letters(homoglyph_latin(m.group(1))).upper()
-        if not re.fullmatch(r"[A-Z]{2,5}", word) or word[0] not in _INSERT_SHAPES:
+        word = insert_prefix_from_word(m.group(1))
+        if not word:
             continue
         code = word + (m.group(2) or "")
         if code not in out:
             out.append(code)
     for m in _RE_PAREN_INSERT.finditer((name or "").upper()):
-        if m.group(1) not in out:
-            out.append(m.group(1))
+        code = m.group(1)
+        if code[0] not in _INSERT_SHAPES:  # «(YS25)» — марка, а не пластина
+            continue
+        if code not in out:
+            out.append(code)
     return out
 
 
@@ -697,7 +770,9 @@ class CatalogSearchEngine:
         if not code or len(code) < 4:
             return code
         pref = code[:4].upper()
-        if pref in self._insert_prefixes:
+        # Известные префиксы пластин не «исправляем», даже если таких позиций нет в текущем срезе:
+        # иначе CCMT1204 (нет в каталоге) превратился бы в CNMG1204 и подбор шёл бы под чужую пластину.
+        if pref in self._insert_prefixes or pref in _COMMON_INSERT_PREFIXES:
             return code
         cands = []
         for known, cnt in self._insert_prefixes.items():
@@ -742,6 +817,8 @@ class CatalogSearchEngine:
         if fam == "insert":
             if q.insert_code:
                 out.append(("код", True, lambda it: self._code_match(it, q.insert_code)[0] > 0))
+            if q.holder_compat:
+                out.append(("под державку", True, lambda it: self._insert_fits_holder(it, q)))
             if a.get("size_code"):
                 out.append(("размер", True, lambda it: str((it["attrs"] or {}).get("size_code") or "").zfill(2) == str(a["size_code"]).zfill(2)))
             if a.get("diameter_mm") and not q.insert_code:
@@ -843,6 +920,24 @@ class CatalogSearchEngine:
         return True
 
     @staticmethod
+    def _insert_fits_holder(it: Dict[str, Any], q: Query) -> bool:
+        """CNMG120408 в MCLNR2525M12: форма C, задний угол N, размер 12."""
+        info = q.holder_compat or {}
+        attrs = it.get("attrs") or {}
+        src = str(attrs.get("iso_code") or it.get("sku") or "")
+        code = compact(src).upper()
+        m = re.match(r"[A-Z]+", code)
+        if not m or not info.get("size"):
+            return False
+        pref = m.group(0)
+        digits = code[len(pref):]
+        if pref[0] != info.get("shape"):
+            return False
+        if info.get("clearance") and len(pref) > 1 and pref[1] != info["clearance"]:
+            return False
+        return digits[:2] == str(info["size"])
+
+    @staticmethod
     def _mill_fits(it: Dict[str, Any], q: Query) -> bool:
         want = (q.compat_insert or "").upper()
         if not want:
@@ -899,11 +994,68 @@ class CatalogSearchEngine:
             if fixed != q.compat_insert:
                 q._set_compat(fixed)
         if q.family is None:
+            if q.compat_insert:
+                return self._search_compat(q, limit, in_stock_only)
             return self._search_ambiguous(q, limit, in_stock_only)
+        if q.compat_requested and not q.compat_insert:
+            return self._compat_ask_code(q)
+        if q.holder_compat_requested and not q.holder_compat:
+            return self._holder_ask_code(q)
         return self._search_family(q, q.family, limit, in_stock_only)
 
+    def _compat_ask_code(self, q: Query) -> Dict[str, Any]:
+        """«Фреза под пластину» без кода пластины: подбирать не под что, просим код."""
+        return {
+            "query": q.text, "family": q.family, "groups": [], "products": [],
+            "parsed": dict(q.attrs), "chips": self._chips(q, q.family),
+            "level": "уточните пластину", "total_found": 0, "relaxations": [],
+            "follow_ups": [
+                "Укажите код пластины, под которую нужен инструмент (например CNMG 120408 или APMT1604)."
+            ],
+            "note": "Для подбора совместимого инструмента нужен код пластины.",
+        }
+
+    def _holder_ask_code(self, q: Query) -> Dict[str, Any]:
+        """«Пластина под державку» без кода державки: подбирать не под что, просим код."""
+        return {
+            "query": q.text, "family": "insert", "groups": [], "products": [],
+            "parsed": dict(q.attrs), "chips": self._chips(q, "insert"),
+            "level": "уточните державку", "total_found": 0, "relaxations": [],
+            "follow_ups": [
+                "Укажите код державки, для которой нужна пластина (например MCLNR2525M12)."
+            ],
+            "note": "Для подбора пластины нужен код державки.",
+        }
+
+    def _search_compat(self, q: Query, limit: int, in_stock_only: bool) -> Dict[str, Any]:
+        """Запрос без группы, но с кодом пластины: показать совместимый инструмент."""
+        groups, products, total = [], [], 0
+        for fam in ("holder", "mill"):
+            if not self.by_family.get(fam):
+                continue
+            res = self._search_family(q, fam, limit, in_stock_only)
+            if res["products"]:
+                groups.append({"family": fam, "title": FAMILY_TITLES.get(fam, fam),
+                               "products": res["products"], "total_found": res["total_found"],
+                               "level": res["level"]})
+                products.extend(res["products"])
+                total += res["total_found"]
+        out = {
+            "query": q.text, "family": None, "groups": groups, "products": products[:limit],
+            "parsed": dict(q.attrs), "chips": self._chips(q, None),
+            "level": "подбор" if products else "нет совместимых",
+            "total_found": total, "relaxations": [],
+            "follow_ups": [] if products else [
+                f"Под пластину {q.compat_insert} совместимых державок и корпусов фрез в каталоге не нашлось."
+            ],
+            "note": f"Показан инструмент, совместимый с пластиной {q.compat_insert}.",
+        }
+        if q.compat_insert:
+            out["compatible_insert"] = q.compat_insert
+        return out
+
     def _search_ambiguous(self, q: Query, limit: int, in_stock_only: bool) -> Dict[str, Any]:
-        if not (q.free_tokens or q.insert_code or q.holder_code or q.attrs):
+        if not (q.free_tokens or q.insert_code or q.holder_code or q.attrs or q.compat_insert):
             return {
                 "query": q.text, "family": None, "groups": [], "products": [],
                 "parsed": {}, "chips": [], "level": "уточните группу",
@@ -1011,6 +1163,8 @@ class CatalogSearchEngine:
             out["holder_code"] = q.holder_code
         if q.compat_insert:
             out["compatible_insert"] = q.compat_insert
+        if q.holder_compat and fam == "insert":
+            out["fits_holder"] = q.holder_compat_code
         return out
 
     def _related_pool(self, fam: str) -> List[Dict[str, Any]]:
@@ -1124,10 +1278,12 @@ class CatalogSearchEngine:
         a = q.attrs
         if q.insert_code:
             chips.append(f"код: {q.insert_code}")
-        if q.holder_code:
+        if q.holder_code and not (fam == "insert" and q.holder_compat_code):
             chips.append(f"код: {q.holder_code}")
         if q.compat_insert:
             chips.append(f"под пластину: {q.compat_insert}")
+        if q.holder_compat and fam == "insert":
+            chips.append(f"под державку: {q.holder_compat_code}")
         if a.get("diameter_mm") and (not q.thread or a.get("tap_drill_for")):
             chips.append(f"диаметр: {fmt_num(a['diameter_mm'])} мм")
         if q.thread:
@@ -1171,6 +1327,8 @@ class CatalogSearchEngine:
     def _follow_ups(self, q: Query, fam: str, products: List[Dict[str, Any]]) -> List[str]:
         a = q.attrs
         tips = []
+        if q.compat_requested and not q.compat_insert:
+            tips.append("Укажите код пластины, под которую нужен инструмент (например CNMG 120408 или APMT1604).")
         if fam == "drill":
             if not a.get("diameter_mm"):
                 tips.append("Укажите диаметр сверла (например «8,5 мм»).")
@@ -1188,7 +1346,7 @@ class CatalogSearchEngine:
             if not q.holder_code and not a.get("shank_mm"):
                 tips.append("Укажите сечение державки (16х16, 20х20, 25х25) или её код.")
         elif fam == "insert":
-            if not q.insert_code:
+            if not q.insert_code and not q.holder_compat:
                 tips.append("Укажите код пластины (например CNMG 120408) или форму и размер.")
         return tips[:3]
 

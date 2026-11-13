@@ -926,11 +926,19 @@ class ToolAdvisorEngine:
         level = res.get("level") or ""
         if res.get("family") is None:
             word = self._plural(total, "позиция", "позиции", "позиций")
-            lines.append(f"Найдено в разных группах: **{total}** {word} — уточните группу, чтобы сузить выбор.\n")
+            if res.get("compatible_insert"):
+                lines.append(f"Найдено совместимого инструмента: **{total}** {word}.\n")
+            else:
+                lines.append(f"Найдено в разных группах: **{total}** {word} — уточните группу, чтобы сузить выбор.\n")
         else:
-            note = {"точное": "точное совпадение", "частичное": "частичное совпадение", "аналог": "ближайшие аналоги"}.get(level, level)
-            word = self._plural(total, "позиция", "позиции", "позиций")
-            lines.append(f"Найдено: **{total}** {word}" + (f" ({note})" if note else "") + "\n")
+            if level == "уточните пластину":
+                lines.append("Чтобы подобрать совместимый инструмент, укажите код пластины — например CNMG 120408 или APMT1604.\n")
+            elif level == "уточните державку":
+                lines.append("Чтобы подобрать пластину, укажите код державки — например MCLNR2525M12.\n")
+            else:
+                note = {"точное": "точное совпадение", "частичное": "частичное совпадение", "аналог": "ближайшие аналоги"}.get(level, level)
+                word = self._plural(total, "позиция", "позиции", "позиций")
+                lines.append(f"Найдено: **{total}** {word}" + (f" ({note})" if note else "") + "\n")
         if res.get("availability"):
             lines.append(f"> ⚠️ {res['availability']}\n")
         if res.get("relaxations"):
@@ -940,11 +948,20 @@ class ToolAdvisorEngine:
             lines.append(f"**Сверло под резьбу {td['thread']}:** Ø {self._fmt_num(td['drill_mm'])} мм.\n")
         if res.get("fits_insert"):
             lines.append(f"**Подходящая пластина:** {res['fits_insert']}.\n")
+        if res.get("fits_holder"):
+            lines.append(f"**Подбор под державку {res['fits_holder']}:** показаны пластины, которые в неё устанавливаются.\n")
         if res.get("compatible_insert"):
-            what = "державки" if res.get("family") == "holder" else "корпуса фрез"
-            lines.append(f"**Подбор под пластину {res['compatible_insert']}:** показаны {what}, которые с ней совместимы.\n")
+            fam = res.get("family")
+            if fam:
+                what = {"holder": "державки", "mill": "корпуса фрез"}.get(fam, "инструмент")
+                lines.append(f"**Подбор под пластину {res['compatible_insert']}:** показаны {what}, которые с ней совместимы.\n")
+            else:
+                titles = [self._SITE_FAMILY_TITLES.get(g.get("family")) for g in (res.get("groups") or []) if g.get("products")]
+                titles = [t for t in titles if t]
+                lines.append(f"**Подбор под пластину {res['compatible_insert']}:** совместимый инструмент"
+                             + (": " + ", ".join(titles) if titles else "") + ".\n")
         products = res.get("products") or []
-        if not products:
+        if not products and not res.get("follow_ups"):
             lines.append("⚠️ По этому запросу в каталоге ничего не найдено — уточните группу, код или размер.\n")
         groups = res.get("groups") or []
         if groups:
@@ -957,7 +974,7 @@ class ToolAdvisorEngine:
             for i, p in enumerate(products, 1):
                 lines.extend(self._render_site_product(i, p))
         follow = res.get("follow_ups") or []
-        if follow:
+        if follow and level not in ("уточните пластину", "уточните державку"):
             lines.append("### 💡 Уточните запрос")
             for i, tip in enumerate(follow[:3], 1):
                 lines.append(f"{i}. {tip}")
@@ -980,11 +997,10 @@ class ToolAdvisorEngine:
                 "response_text": self._format_analog_response(user_query, tool_res), "llm_status": "not_needed",
             }
 
-        # 2. Каталог сайта qtool.ru (/upload): все группы одним детерминированным поиском.
-        # Запросы про совместимость («державка под пластину CNMG») остаются в старом разборе.
+        # 2. Каталог сайта qtool.ru (/upload): все группы одним детерминированным поиском,
+        # включая подбор совместимого инструмента («державка под пластину CNMG»).
         site = self.get_site_engine()
-        compat_query = bool(re.search(r"под\s+(?:пластин|резец)|совместим|подходит\s+(?:ли\s+)?(?:к|под)|какая\s+державк", lower))
-        if site is not None and not compat_query:
+        if site is not None:
             return self._site_answer(user_query, site)
 
         search_args = self._detect_search_args(user_query)

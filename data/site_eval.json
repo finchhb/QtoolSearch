@@ -115,6 +115,54 @@
     "must_include": "BAP 400R 63-22-4T"
   },
   {
+    "query": "державка 2525 под пластину CNMG1204",
+    "family": "holder",
+    "compatible_insert": "CNMG1204",
+    "chips_include": ["под пластину: CNMG1204", "сечение: 25×25 мм"],
+    "must_include": "MCLNR2525M12"
+  },
+  {
+    "query": "фреза или корпус фрезы под пластину APMT1604",
+    "family": "mill",
+    "compatible_insert": "APMT1604",
+    "must_include": "BAP 400R 63-22-4T"
+  },
+  {
+    "query": "расточная державка под пластину CCMT09T304",
+    "family": "holder",
+    "compatible_insert": "CCMT09T304",
+    "must_include": "SCLCR09"
+  },
+  {
+    "query": "под пластину CNMG1204",
+    "family": null,
+    "level": "подбор",
+    "compatible_insert": "CNMG1204",
+    "total_min": 1,
+    "must_include": "MCLNR2525M12"
+  },
+  {
+    "query": "фреза под пластину РПМТ1204",
+    "family": "mill",
+    "compatible_insert": "RPMT1204",
+    "must_include": "EMRW 6R"
+  },
+  {
+    "query": "пластина под державку MCLNR2525M12",
+    "family": "insert",
+    "level": "точное",
+    "fits_holder": "MCLNR2525M12",
+    "total_min": 1,
+    "must_include": "CNMG 120408"
+  },
+  {
+    "query": "пластина для державки SCLCR2525M12",
+    "family": "insert",
+    "fits_holder": "SCLCR2525M12",
+    "total_min": 1,
+    "must_include": "CCMT 120408"
+  },
+  {
     "query": "8,5",
     "total_max": 0
   },
