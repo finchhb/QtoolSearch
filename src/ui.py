@@ -39,6 +39,11 @@ form button.sec{background:transparent;color:var(--muted);border:1px solid var(-
 .train textarea{min-height:48px}.train button{background:var(--accent2);color:#fff;border:0;border-radius:8px;padding:7px 14px;margin-top:6px}
 .train .hint{color:var(--muted);font-size:13px}.train .ok{color:var(--ok)}.train .sug label{display:inline-block;margin:4px 10px 0 0}
 .note{color:var(--muted);font-size:12.5px;max-width:860px;margin:0 auto;padding:0 2px}
+.copy{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:6px;padding:3px 6px;display:inline-flex;align-items:center;justify-content:center;line-height:1;opacity:.75;transition:opacity .15s,color .15s,border-color .15s}
+.copy:hover{opacity:1;border-color:var(--accent2);color:var(--accent2)}
+.copy.ok{border-color:var(--ok);color:var(--ok);opacity:1}
+.qtools{margin-top:6px;display:flex;justify-content:flex-end}
+.atools{margin-top:8px;display:flex;justify-content:flex-end}
 </style></head><body>
 <header><div><b>Подбор инструмента qtool.ru</b><br><small id="src">загрузка…</small></div><nav id="adm"><a href="/admin#sec-source">📚 Источник</a><a href="/admin#sec-train">🎓 Обучение</a><a href="/admin#sec-rules">📝 Правила</a><a href="/admin#sec-llm" id="llmlink">🤖 LLM</a></nav></header>
 <div id="msgs">
@@ -82,6 +87,61 @@ function md(text) {
   close(); return out.join("");
 }
 function add(cls, html) { const d = document.createElement("div"); d.className = "msg " + cls; d.innerHTML = html; $("msgs").appendChild(d); d.scrollIntoView({ block: "end", behavior: "smooth" }); return d; }
+
+const COPY_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const CHECK_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (e) {}
+  try {  // http:// на локальном ПК: Clipboard API недоступен, копируем через временное поле
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand("copy");
+    ta.remove(); return ok;
+  } catch (e) { return false; }
+}
+function copyBtn(getText, label) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "copy";
+  b.title = "Скопировать в буфер"; b.setAttribute("aria-label", label || "Скопировать в буфер");
+  b.innerHTML = COPY_ICON;
+  b.onclick = async () => {
+    const ok = await copyText(getText());
+    b.innerHTML = ok ? CHECK_ICON : COPY_ICON;
+    b.classList.toggle("ok", ok);
+    b.title = ok ? "Скопировано" : "Не удалось скопировать";
+    setTimeout(() => { b.innerHTML = COPY_ICON; b.classList.remove("ok"); b.title = "Скопировать в буфер"; }, 1400);
+  };
+  return b;
+}
+function line(el) { return (el.innerText || "").replace(/\s+/g, " ").trim(); }
+// Позиция ответа: строка с названием + следующие за ней списки характеристик и ссылка на магазин.
+function productText(li) {
+  const lines = [line(li)], links = [];
+  const collectLinks = el => el.querySelectorAll("a[href]").forEach(a => links.push(a.href));
+  collectLinks(li);
+  let el = li.parentElement.nextElementSibling;
+  while (el && el.tagName === "UL") {
+    el.querySelectorAll(":scope > li").forEach(x => { const t = line(x); if (t) lines.push("• " + t); });
+    collectLinks(el);
+    el = el.nextElementSibling;
+  }
+  links.filter((u, i) => links.indexOf(u) === i && !lines.some(l => l.includes(u))).forEach(u => lines.push(u));
+  return lines.join("\n");
+}
+function answerText(card) {
+  const body = card.querySelector(".body"), clone = body.cloneNode(true);
+  clone.style.cssText = "position:absolute;left:-9999px;top:0";
+  document.body.appendChild(clone);  // detached-узел не даёт переносов строк в innerText
+  clone.querySelectorAll("a[href]").forEach(a => { a.textContent = a.textContent + " (" + a.href + ")"; });
+  const text = (clone.innerText || "").trim();
+  clone.remove();
+  return text;
+}
+function copyRow(btn) { const row = document.createElement("div"); row.className = "qtools"; row.appendChild(btn); return row; }
 
 function badge(d) {
   if (d.decision === "site_search" || d.decision === "multi_position") return '<span class="badge">⚡ Детерминированный поиск по каталогу qtool.ru</span>';
@@ -135,7 +195,7 @@ function feedbackBox(card, query, answer, meta) {
 }
 
 async function ask(text) {
-  add("user", esc(text));
+  add("user", esc(text)).appendChild(copyRow(copyBtn(() => text, "Скопировать запрос")));
   const wait = add("", '<span class="badge">ищу в наличии…</span>');
   $("go").disabled = true;
   try {
@@ -143,7 +203,16 @@ async function ask(text) {
     const d = await r.json();
     wait.remove();
     if (!r.ok) { add("", '<p>' + esc(d.error || "Ошибка сервера") + '</p>'); return; }
-    const card = add("", badge(d) + md(d.response_text || ""));
+    const card = add("", badge(d) + '<div class="body">' + md(d.response_text || "") + "</div>");
+    card.querySelectorAll(".body ol > li").forEach(li => {
+      const row = copyRow(copyBtn(() => productText(li), "Скопировать позицию"));
+      let last = li.parentElement, el = last.nextElementSibling;
+      while (el && el.tagName === "UL") { last = el; el = el.nextElementSibling; }
+      last.insertAdjacentElement("afterend", row);
+    });
+    const atools = document.createElement("div"); atools.className = "atools";
+    atools.appendChild(copyBtn(() => answerText(card), "Скопировать ответ"));
+    card.appendChild(atools);
     if (LOCAL_ADMIN) trainBox(card, text, d.parsed);
     feedbackBox(card, text, d.response_text || "", { decision: d.decision, llm_status: d.llm_status || 'not_needed', top: ((d.tool_result || {}).products || []).slice(0, 3).map(p => p.sku) });
   } catch (e) { wait.remove(); add("", "<p>Нет связи с сервером. Попробуйте ещё раз.</p>"); }
