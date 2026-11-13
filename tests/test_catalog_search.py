@@ -76,6 +76,10 @@ ITEMS = [
          collet_series="ER32", clamp_range="1-12"),
     item("accessory", "collet", "Цанга ER32 16 мм", sku="ER32-16",
          collet_series="ER32", clamp_range="2-16"),
+    item("accessory", "tool_holder", "SBHA12-20 держатель осевого инструмента токарного станка",
+         sku="SBHA12-20", stock=5, price=5000.0),
+    item("accessory", "tool_holder", "SBHA20-32 держатель осевого инструмента токарного станка",
+         sku="SBHA20-32", stock=3, price=5200.0),
 ]
 
 
@@ -84,7 +88,8 @@ class SelfContainedQueryTest(unittest.TestCase):
 
     def test_group_message_is_self_contained(self):
         for q in ("метчик М10", "державка 2020 под CNMG12", "фреза под пластину", "сверло 8,5 мм",
-                  "расточная державка с хвостом 25 под cnmg12"):
+                  "расточная державка с хвостом 25 под cnmg12",
+                  "держатель осевого инструмента под хвостовик 20"):
             self.assertTrue(is_self_contained_query(q), q)
 
     def test_code_message_is_self_contained(self):
@@ -371,6 +376,44 @@ class HolderSubgroupTest(unittest.TestCase):
         self.assertEqual([p["sku"] for p in res["products"]], ["S20R-SDUCR11"])
         self.assertIn("хвост: Ø20 мм", res["chips"])
         self.assertNotIn("код: S20", res["chips"])
+
+
+class ToolHolderTest(unittest.TestCase):
+    """«держатель осевого инструмента» — группа оснастки, а не пластины из предыдущего запроса."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_holder_word_selects_accessory_tool_holder(self):
+        q = Query("держатель осевого инструмента под хвостовик 20")
+        self.assertEqual(q.family, "accessory")
+        self.assertEqual(q.category_hints, ["tool_holder"])
+        self.assertTrue(is_self_contained_query(q.text))
+
+    def test_shank_phrase_means_clamped_tool_shank(self):
+        # «под хвостовик 20» — хвост зажимаемого инструмента, а не хвостовик самого держателя
+        q = Query("держатель осевого инструмента под хвостовик 20")
+        self.assertEqual(q.attrs.get("clamp_mm"), 20.0)
+        self.assertNotIn("shank_mm", q.attrs)
+
+    def test_query_returns_tool_holders_for_20_shank(self):
+        res = self.engine.search("держатель осевого инструмента под хвостовик 20")
+        self.assertEqual(res["family"], "accessory")
+        self.assertEqual([p["sku"] for p in res["products"]], ["SBHA12-20"])
+        self.assertIn("тип: держатель осевого инструмента", res["chips"])
+        self.assertIn("под хвостовик: 20 мм", res["chips"])
+        self.assertEqual(res["products"][0]["attrs"].get("clamp_mm"), 20.0)
+
+    def test_sbha_article_is_parsed_as_tool_holder(self):
+        q = Query("SBHA12-20")
+        self.assertEqual(q.family, "accessory")
+        self.assertEqual(q.category_hints, ["tool_holder"])
+        self.assertEqual((q.attrs.get("shank_mm"), q.attrs.get("clamp_mm")), (12.0, 20.0))
+        self.assertIsNone(q.holder_code)
+
+    def test_tap_holder_stays_in_taps(self):
+        self.assertEqual(Query("держатель для метчика М10").family, "tap")
 
 
 class ClampHoleTest(unittest.TestCase):

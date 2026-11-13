@@ -760,7 +760,7 @@ class ToolAdvisorEngine:
         ("chipbreaker", "стружколом {}"), ("operation", "обработка {}"),
         ("holder_code", "код державки {}"), ("insert_size_code", "пластина {}"),
         ("compatible_inserts", "под пластины {}"),
-        ("collet_series", "серия {}"), ("clamp_range", "зажим {} мм"), ("clamp_mm", "под Ø {} мм"),
+        ("collet_series", "серия {}"), ("clamp_range", "зажим {} мм"), ("clamp_mm", "под хвостовик Ø {} мм"),
         ("standard", "стандарт {}"), ("coating", "покрытие {}"), ("material", "материал {}"),
         ("tolerance", "допуск {}"), ("hrc", "{} HRC"), ("ld_ratio", "{}-D"),
         ("secondary_iso", "также ISO {}"),
@@ -873,6 +873,7 @@ class ToolAdvisorEngine:
 
     def _site_attr_parts(self, product: Dict[str, Any]) -> List[str]:
         attrs = product.get("attrs") or {}
+        tool_holder = product.get("category") == "tool_holder"
         parts = []
         for key, fmt in self._SITE_ATTR_FMT:
             value = attrs.get(key)
@@ -880,6 +881,10 @@ class ToolAdvisorEngine:
                 continue
             if key == "shank_mm" and (attrs.get("shank_section") or attrs.get("shank_diameter_mm")):
                 continue
+            if tool_holder and key == "shank_mm":
+                fmt = "хвостовик держателя {} мм"
+            elif tool_holder and key == "clamp_mm":
+                fmt = "под инструмент Ø {} мм"
             if key == "operation":
                 value = self._OP_NAMES.get(value, value)
             parts.append(fmt.format(self._fmt_num(value)))

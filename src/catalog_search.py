@@ -210,7 +210,7 @@ FAMILY_KEYWORDS = [
     ("reamer", r"разверт"),
     ("countersink", r"зенков|зенкер|фаскосним|гратосним"),
     ("holder", r"державк|борштанг|holder|резец|резц|минирез|оправк|расточн"),
-    ("accessory", r"цанг|патрон|винт|гайк|ключ|сож|тиск|кулачк|адаптер|переходник|втулк"),
+    ("accessory", r"цанг|патрон|винт|гайк|ключ|сож|тиск|кулачк|адаптер|переходник|втулк|держател"),
     ("measuring", r"штанген|микрометр|нутромер|линейк|угломер|индикатор|рулетк"),
     ("saw", r"пил[аы]|пильн|дисков.*пил"),
 ]
@@ -245,13 +245,17 @@ CATEGORY_HINTS = {
         ("holder_threading", r"резьбов"),
         ("holder_external", r"наружн|проходн|подрезн"),
     ],
+    "accessory": [
+        ("tool_holder", r"осев[а-яё]*\s+инструмент|токарн[а-яё]*\s+блок"),
+    ],
 }
 
-HOLDER_CATEGORY_TITLES = {
+CATEGORY_TITLES = {
     "holder_internal": "расточная",
     "holder_external": "наружная",
     "holder_grooving": "канавочная",
     "holder_threading": "резьбовая",
+    "tool_holder": "держатель осевого инструмента",
 }
 
 
@@ -307,6 +311,17 @@ class Query:
         for cat, pattern in CATEGORY_HINTS.get(self.family or "", []):
             if re.search(pattern, low):
                 self.category_hints.append(cat)
+
+        m = re.search(r"(?<![A-Za-z0-9])SBHA\)?\s*(\d{2})\s*[-–]\s*(\d{2})(?:\s*[-–]\s*(\d{2,3}))?", self.text, re.I)
+        if m:
+            # «SBHA12-20»: держатель осевого инструмента — 12 хвостовик, 20 хвост инструмента
+            self.family = "accessory"
+            if "tool_holder" not in self.category_hints:
+                self.category_hints.append("tool_holder")
+            self.attrs["shank_mm"] = float(m.group(1))
+            self.attrs["clamp_mm"] = float(m.group(2))
+            if m.group(3):
+                self.attrs["length_mm"] = float(m.group(3))
 
         # Обратный подбор: «пластина под державку MCLNR2525M12» — какие пластины в неё ставятся.
         # Код после слова «державка» — это код державки, а не пластины.
@@ -446,7 +461,12 @@ class Query:
         if m:
             val = float(m.group(1).replace(",", "."))
             if 1 <= val <= 200:
-                self.attrs["shank_mm"] = val
+                if "tool_holder" in self.category_hints:
+                    # «держатель осевого инструмента под хвостовик 20»: 20 мм —
+                    # хвост зажимаемого инструмента, а не хвостовик самого держателя
+                    self.attrs["clamp_mm"] = val
+                else:
+                    self.attrs["shank_mm"] = val
 
         if self.family == "holder" and "shank_mm" not in self.attrs:
             # «державка расточная S20»: буква типа хвоста и диаметр, как в начале кода ISO 5608
@@ -624,7 +644,7 @@ _RE_PAREN_INSERT = re.compile(r"\(([A-Z]{2,5}\d{2,4})")
 _RE_FAMILY_TOPIC = re.compile(
     r"\b(?:пластин|сверл|фрез|борфрез|метчик|раскатник|плашк|разверт|зенков|зенкер|"
     r"фаскосним|гратосним|державк|борштанг|резец|резц|минирез|оправк|расточн|"
-    r"цанг|патрон|винт|гайк|ключ|пил)", re.I
+    r"цанг|патрон|винт|гайк|ключ|пил|держател|sbha)", re.I
 )
 
 
@@ -638,7 +658,8 @@ def is_self_contained_query(text: str) -> bool:
         return True
     q = Query(topic)
     # «M10» даёт holder_code, но это размер резьбы в уточнении, а не код оснастки
-    return bool(q.insert_code or (q.holder_code and parse_holder_code(q.holder_code)))
+    return bool(q.insert_code or (q.holder_code and parse_holder_code(q.holder_code))
+                or "tool_holder" in q.category_hints)
 
 
 def mill_insert_codes(name: str) -> List[str]:
@@ -688,7 +709,9 @@ class CatalogSearchEngine:
         vocab = set()
         prefixes: Dict[str, int] = {}
         for it in self.items:
-            attrs = it.get("attrs") or {}
+            attrs = it.get("attrs")
+            if not attrs:
+                attrs = it["attrs"] = {}
             iso = str(attrs.get("iso_code") or "").strip().upper()
             if len(iso) >= 4:
                 prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
@@ -711,6 +734,15 @@ class CatalogSearchEngine:
                 if codes:
                     it["_mill_inserts"] = codes
                     attrs["compatible_inserts"] = ", ".join(codes)
+            elif it["family"] == "accessory" and it.get("category") == "tool_holder":
+                # «SBHA12-20 ...»: 12 — хвостовик держателя, 20 — хвост зажимаемого инструмента
+                m = re.search(r"SBHA\)?\s*(\d{2})\s*[-–]\s*(\d{2})(?:\s*[-–]\s*(\d{2,3}))?",
+                              str(it.get("name") or "").upper())
+                if m:
+                    attrs.setdefault("shank_mm", float(m.group(1)))
+                    attrs.setdefault("clamp_mm", float(m.group(2)))
+                    if m.group(3):
+                        attrs.setdefault("length_mm", float(m.group(3)))
             text = " ".join(str(x) for x in (
                 it.get("sku"), it.get("name"), it.get("brand"), it.get("category"),
                 attrs.get("iso_code"), attrs.get("holder_code"), attrs.get("grade"),
@@ -912,10 +944,15 @@ class CatalogSearchEngine:
                 out.append(("серия", True, lambda it: (it["attrs"].get("collet_series") or "").upper() == a["collet_series"].upper()))
             if a.get("clamp_mm"):
                 want = f"{a['clamp_mm']:g}"
-                out.append(("диаметр зажима", False, lambda it: (
-                    str(it["attrs"].get("clamp_range") or "").endswith("-" + want)
-                    or bool(re.search(rf"(?<![\d.]){re.escape(want)}(?:[.,]0)?\s*мм", str(it.get("name") or "")))
+                clamp_name = "под хвостовик" if "tool_holder" in q.category_hints else "диаметр зажима"
+                out.append((clamp_name, False, lambda it: (
+                    self._near(it["attrs"].get("clamp_mm"), a["clamp_mm"], 0.5)
+                    or (not it["attrs"].get("clamp_mm")
+                        and (str(it["attrs"].get("clamp_range") or "").endswith("-" + want)
+                             or bool(re.search(rf"(?<![\d.]){re.escape(want)}(?:[.,]0)?\s*мм", str(it.get("name") or "")))))
                 )))
+            if a.get("shank_mm"):
+                out.append(("хвостовик", False, lambda it: self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
 
         if a.get("coating"):
             out.append(("покрытие", False, lambda it: self._same_text(it["attrs"].get("coating"), a["coating"])))
@@ -1310,7 +1347,7 @@ class CatalogSearchEngine:
         if fam:
             chips.append(f"группа: {FAMILY_TITLES.get(fam, fam)}")
         for cat in q.category_hints:
-            title = HOLDER_CATEGORY_TITLES.get(cat)
+            title = CATEGORY_TITLES.get(cat)
             if title:
                 chips.append(f"тип: {title}")
         a = q.attrs
@@ -1352,7 +1389,10 @@ class CatalogSearchEngine:
         if a.get("collet_series"):
             chips.append(f"серия: {a['collet_series']}")
         if a.get("clamp_mm"):
-            chips.append(f"под диаметр: {fmt_num(a['clamp_mm'])} мм")
+            if "tool_holder" in q.category_hints:
+                chips.append(f"под хвостовик: {fmt_num(a['clamp_mm'])} мм")
+            else:
+                chips.append(f"под диаметр: {fmt_num(a['clamp_mm'])} мм")
         if a.get("thickness_mm"):
             chips.append(f"толщина: {fmt_num(a['thickness_mm'])} мм")
         if a.get("coating"):
@@ -1392,6 +1432,9 @@ class CatalogSearchEngine:
         elif fam == "insert":
             if not q.insert_code and not q.holder_compat:
                 tips.append("Укажите код пластины (например CNMG 120408) или форму и размер.")
+        elif fam == "accessory":
+            if "tool_holder" in q.category_hints and not a.get("clamp_mm"):
+                tips.append("Укажите диаметр хвостовика инструмента (16, 20, 25, 32 мм).")
         return tips[:3]
 
 
