@@ -21,7 +21,7 @@ import urllib.request
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from build_catalog import parse_turning
-from src.xlsx_reader import Sheet, find_header_row, header_code, header_index, read_workbook, schema_hash
+from src.xlsx_reader import Sheet, find_header_row, header_index, read_workbook, schema_hash
 
 DATA_DIR = os.environ.get("ADVISOR_DATA_DIR", "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
@@ -123,6 +123,11 @@ NAME_FAMILY_HINTS = [
 
 UNKNOWN_SECTIONS: List[str] = []
 
+# Тип товара в начале названия: только тогда это запчасть (а не «винтовая фреза»).
+_RE_SPARE_NAME = re.compile(
+    r"^(?:винт|винты|винта|гайка|гайки|гаек|шайба|шайбы|шайб|пружина|пружины|пружинная|пружинные|ключ|ключи)\b"
+)
+
 
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower().replace("ё", "е")).strip()
@@ -157,12 +162,11 @@ def classify(section: str, subsection: str, name: str = "") -> Tuple[str, str]:
                     pair = ("drill", "solid_carbide_drill")
                 break
 
-    # уточнение по названию: крепёж, ключи и держатели попадают в свои группы
-    if "ключ" in low_name:
+    # Крепёж и ключи — запчасть, только когда это тип товара (начало названия), а не слово
+    # внутри: «винт. кан.» метчика, «винтовая фреза», «с открытым винтом» остаются инструментом.
+    if _RE_SPARE_NAME.match(low_name):
         return "accessory", "spare_part"
-    if re.search(r"\bвинт|гайк|шайб|пружин", low_name):
-        return "accessory", "spare_part"
-    if "державк" in low_name and "сверл" in low_name:
+    if (pair is None or pair[0] == "accessory") and "державк" in low_name and "сверл" in low_name:
         return "drill", "drill_holder"
     if "лезвие" in low_name or "гратосним" in low_name:
         return "countersink", "deburring_blade"
@@ -656,7 +660,7 @@ def parse_price_layout(sheets: Sequence[Sheet]) -> Tuple[List[Dict[str, Any]], D
         stock_i = stock_i if stock_i is not None else 6
         section = subsection = ""
         for row in sheet.rows[hi + 1:]:
-            def cell(i):
+            def cell(i, row=row):
                 return row[i] if i is not None and i < len(row) else ""
             sku = cell(sku_i).strip()
             name = cell(name_i).strip()
@@ -714,7 +718,6 @@ def parse_bitrix_layout(sheets: Sequence[Sheet]) -> Tuple[List[Dict[str, Any]], 
             continue
         headers = sheet.rows[hi]
         info["schema"][sheet.name] = schema_hash(headers)
-        idx = header_index(headers)
         for row in sheet.rows[hi + 1:]:
             cols = _row_map(headers, row)
             elem_id = (cols.get("id элемента") or "").strip()

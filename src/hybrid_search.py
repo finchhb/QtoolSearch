@@ -11,6 +11,7 @@ import math
 import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
+
 from src import rates
 from src.materials_mapping import BRAND_SYNONYMS, CLEARANCE_ANGLE_DESCRIPTIONS
 

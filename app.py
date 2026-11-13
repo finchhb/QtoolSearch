@@ -30,8 +30,8 @@ from src.llm_client import load_env_file
 
 load_env_file()  # .env читаем ДО остальных модулей: от него зависят режим, токен и фильтры
 
-from src.engine import ToolAdvisorEngine  # noqa: E402
 from src import training  # noqa: E402
+from src.engine import ToolAdvisorEngine  # noqa: E402
 from src.materials_mapping import detect_iso_group  # noqa: E402
 from src.ui import ADMIN_HTML, CHAT_HTML  # noqa: E402
 
@@ -223,8 +223,6 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
 
     def _html(self, html: str) -> None:
         data = html.encode("utf-8")
-        anc = " ".join(["'self'"] + sorted(ALLOWED_ORIGINS))
-        csp = "default-src 'self' 'unsafe-inline' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src-attr 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'"
         self._headers(200, "text/html; charset=utf-8", {"Cache-Control": "no-store, no-cache, must-revalidate", "Content-Length": str(len(data))})
         self.end_headers()
         self.wfile.write(data)

@@ -10,7 +10,6 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # Полная матрица из файла Кросс_таблица_Аналогов_Сплавов_и_Стружколомов.xlsx (Лист 1)
 EXCEL_MATRIX = [
     {

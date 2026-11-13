@@ -28,17 +28,12 @@ from build_catalog import (
     download_price_sale,
     download_qtool_price,
 )
+from src import iso1832, rates, training
 from src.analogs_engine import AnalogsEngine
 from src.catalog_search import CatalogSearchEngine
 from src.clarification_advisor import ClarificationAdvisor
-from src import rates
-from src.site_catalog import SITE_CSV, load_site_catalog
-from src import training
-from src.llm_client import LLMClient
-from src.reviewer import Reviewer
 from src.hybrid_search import HybridSearchEngine
-from src import iso1832
-from src.materials_mapping import detect_material_note, find_unknown_marks
+from src.llm_client import LLMClient
 from src.materials_mapping import (
     BRAND_SYNONYMS,
     detect_clearance_angle,
@@ -46,8 +41,11 @@ from src.materials_mapping import (
     detect_explicit_operation,
     detect_insert_shape,
     detect_iso_group,
-    detect_size_code,
+    detect_material_note,
+    find_unknown_marks,
 )
+from src.reviewer import Reviewer
+from src.site_catalog import SITE_CSV, load_site_catalog
 
 HOLDER_TO_INSERT_MAP = {
     "PCLN": ("CNMG", "C", "12"),
@@ -1267,7 +1265,7 @@ class ToolAdvisorEngine:
                 details.append(f"Шаг: {p['pitch_value']} ({p.get('thread_profile') or ''})")
             if p.get("groove_width_mm") is not None and p.get("groove_width_mm") != "":
                 details.append(f"Ширина канавки: {p['groove_width_mm']} мм")
-            lines.append(f"   * **Характеристики:** " + ", ".join(details))
+            lines.append("   * **Характеристики:** " + ", ".join(details))
             if p.get("offers"):
                 lines.append(f"   * **Предложения** (всего на складах: **{p['stock']} шт.**):")
                 for o in p["offers"]:
@@ -1283,7 +1281,7 @@ class ToolAdvisorEngine:
                 lines.append("")
 
         if holder_res and holder_res.get("recommended_holder_standards"):
-            lines.append(f"**Рекомендуемая оснастка (державки по ISO):**")
+            lines.append("**Рекомендуемая оснастка (державки по ISO):**")
             lines.append(f"* {holder_res['recommended_holder_standards']}\n")
 
         follow_ups = search_res.get("follow_up_questions_for_user") or []

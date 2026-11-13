@@ -398,7 +398,7 @@ def _read_xlsx_rows_pure_python(xlsx_path: str, skiprows: int = 0, max_cols: int
         if "xl/sharedStrings.xml" in zf.namelist():
             with zf.open("xl/sharedStrings.xml") as ss_file:
                 cur_texts: List[str] = []
-                for event, elem in ET.iterparse(ss_file, events=("end",)):
+                for _event, elem in ET.iterparse(ss_file, events=("end",)):
                     tag = elem.tag
                     if tag.endswith("}t"):
                         if elem.text:

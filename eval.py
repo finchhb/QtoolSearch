@@ -34,6 +34,10 @@ def norm(s: str) -> str:
     return re.sub(r"[^A-Z0-9А-Я]", "", str(s).upper())
 
 
+def sku_hit(sku: str, wanted) -> bool:
+    return any(sku == w or sku.startswith(w) or w.startswith(sku) for w in wanted if sku)
+
+
 def read_gold(path):
     try:
         import openpyxl
@@ -87,12 +91,14 @@ def eval_training(e):
         want = [norm(x) for x in re.split(r"[;,\n]", r["correct_skus"]) if norm(x)]
         if want:
             sku_n += 1
-            hit = lambda sk: any(sk == w or sk.startswith(w) or w.startswith(sk) for w in want if sk)  # noqa: E731
-            row["hit1"], row["hit5"] = bool(skus) and hit(skus[0]), any(hit(sk) for sk in skus)
+            row["hit1"], row["hit5"] = bool(skus) and sku_hit(skus[0], want), any(sku_hit(sk, want) for sk in skus)
             h1 += row["hit1"]
             h5 += row["hit5"]
         out.append(row)
-    pct = lambda a_, b_: f"{a_}/{b_} ({100 * a_ // max(b_, 1)}%)"  # noqa: E731
+
+    def pct(a_, b_):
+        return f"{a_}/{b_} ({100 * a_ // max(b_, 1)}%)"
+
     print(f"\n=== Таблица обучения: {n} примеров (парсер БЕЗ подсказок из таблицы) ===")
     print(f"группа ISO: {pct(iso_ok, iso_n)} | вид обработки: {pct(op_ok, op_n)} | артикул эталона в топ-1: {pct(h1, sku_n)}, в топ-5: {pct(h5, sku_n)}")
     bad = [o for o in out if o.get("iso_ok") is False or o.get("op_ok") is False or o.get("hit5") is False]
@@ -156,9 +162,8 @@ def main():
         for q, g in gold:
             res = e.process_query(q)
             skus = [norm(p.get("sku", "")) for p in (res.get("tool_result") or {}).get("products", [])[:5]]
-            hit = lambda s: any(s == x or s.startswith(x) or x.startswith(s) for x in g if s)
-            k1 = bool(skus) and hit(skus[0])
-            k5 = any(hit(s) for s in skus)
+            k1 = bool(skus) and sku_hit(skus[0], g)
+            k5 = any(sku_hit(s, g) for s in skus)
             h1 += k1
             h5 += k5
             report.append({"set": "gold", "category": "", "query": q, "expected_action": ";".join(g), "decision": res["decision"],

@@ -1,7 +1,12 @@
 """Детерминированный поиск по каталогу qtool.ru на синтетическом наборе всех групп."""
 import unittest
 
-from src.catalog_search import CatalogSearchEngine, holder_insert_compat
+from src.catalog_search import (
+    CatalogSearchEngine,
+    clamp_accepts_hole,
+    holder_insert_compat,
+    insert_compat_key,
+)
 from src.clarification_advisor import ClarificationAdvisor
 from src.engine import ToolAdvisorEngine
 
@@ -228,6 +233,7 @@ class CatalogSearchTest(unittest.TestCase):
         self.assertEqual(res["fits_holder"], "MCLNR2020K12")
         self.assertEqual({p["sku"] for p in res["products"]}, {"CNMG120408", "CNMG120412"})
 
+
     def test_insert_for_holder_without_code_asks_code(self):
         res = self.engine.search("пластина под державку")
         self.assertEqual(res["level"], "уточните державку")
@@ -264,6 +270,74 @@ class CatalogSearchTest(unittest.TestCase):
         res = self.engine.search("купить")
         self.assertEqual(res["products"], [])
         self.assertTrue(res["follow_ups"])
+
+
+class ClampHoleTest(unittest.TestCase):
+    """R1: первая буква кода державки соответствует четвёртой букве пластины."""
+
+    def test_no_hole_clamp(self):
+        for hole in "NRF":
+            self.assertTrue(clamp_accepts_hole("C", hole), hole)
+        for hole in "GAMTWQU":
+            self.assertFalse(clamp_accepts_hole("C", hole), hole)
+
+    def test_cylindrical_clamps(self):
+        for clamp in "DMP":
+            for hole in "AMG":
+                self.assertTrue(clamp_accepts_hole(clamp, hole), (clamp, hole))
+            for hole in "NRTWQUF":
+                self.assertFalse(clamp_accepts_hole(clamp, hole), (clamp, hole))
+
+    def test_conical_clamp(self):
+        for hole in "TWQU":
+            self.assertTrue(clamp_accepts_hole("S", hole), hole)
+        for hole in "NAMG":
+            self.assertFalse(clamp_accepts_hole("S", hole), hole)
+
+    def test_unknown_side_is_not_restricted(self):
+        self.assertTrue(clamp_accepts_hole("C", None))
+        self.assertTrue(clamp_accepts_hole(None, "G"))
+        self.assertTrue(clamp_accepts_hole("X", "G"))
+
+    def test_parsed_holder_and_insert(self):
+        cnmg_hole = insert_compat_key("CNMG1204")["hole"]
+        self.assertTrue(clamp_accepts_hole(holder_insert_compat("PCLNR2525M12")["clamp"], cnmg_hole))
+        self.assertFalse(clamp_accepts_hole(holder_insert_compat("SCLCR2525M12")["clamp"], cnmg_hole))
+        self.assertTrue(
+            clamp_accepts_hole(holder_insert_compat("SCLCR2525M12")["clamp"],
+                               insert_compat_key("CCMT1204")["hole"])
+        )
+
+
+# Одинаковые форма, задний угол и размер, разные отверстия: T - коническое, G - цилиндрическое.
+R1_ITEMS = [
+    item("holder", "holder_external", "SCLCR2525M12 Державка для наружного точения",
+         sku="SCLCR2525M12", holder_code="SCLCR2525M12"),
+    item("insert", "turning_insert", "CCMT 120404 MF 4305", sku="CCMT120404",
+         iso_code="CCMT120404", insert_shape="C", clearance_angle="C", size_code=12,
+         corner_radius_mm=0.4, chipbreaker="MF", iso_group="P", operation="finishing", grade="4305"),
+    item("insert", "turning_insert", "CCMG 120408 MF 4305", sku="CCMG120408",
+         iso_code="CCMG120408", insert_shape="C", clearance_angle="C", size_code=12,
+         corner_radius_mm=0.8, chipbreaker="MF", iso_group="P", operation="finishing", grade="4305"),
+]
+
+
+class R1SearchTest(unittest.TestCase):
+    """R1 на выдаче: державка с зажимом S не получает пластину с цилиндрическим отверстием."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(R1_ITEMS)
+
+    def test_reverse_keeps_conical_hole_only(self):
+        res = self.engine.search("пластина под державку SCLCR2525M12")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"CCMT120404"})
+
+    def test_forward_keeps_conical_hole_only(self):
+        fits = {p["sku"] for p in self.engine.search("державка под CCMT1204")["products"]}
+        self.assertIn("SCLCR2525M12", fits)
+        no_fit = {p["sku"] for p in self.engine.search("державка под CCMG1204")["products"]}
+        self.assertNotIn("SCLCR2525M12", no_fit)
 
 
 class SiteOnlyEngine(ToolAdvisorEngine):

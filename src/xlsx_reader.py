@@ -10,8 +10,8 @@ src/xlsx_reader.py - чтение .xlsx на стандартной библио
 """
 import hashlib
 import re
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 

@@ -30,8 +30,72 @@ class ClassifyTest(unittest.TestCase):
         fam, cat = classify("Оснастка", "Цанги")
         self.assertEqual(fam, "accessory")
 
+    def test_spare_word_inside_tool_name_keeps_tool_family(self):
+        # «винт. кан.» — винтовая канавка метчика, а не крепёж.
+        self.assertEqual(
+            classify("Метчики", "Метчики метрические",
+                     "10х1.5 винт. кан. HSS-E DB11010150 Метчик Deskar"),
+            ("tap", "machine_tap"),
+        )
+        self.assertEqual(
+            classify("Фрезы", "Фрезы концевые", "12х12x26x87 3F ц/х ВК30 винтовая фреза Deskar"),
+            ("mill", "end_mill"),
+        )
+        self.assertEqual(
+            classify("Развертки", "Машинные развертки", "Развертка машинная винтовая 8 H7"),
+            ("reamer", "machine_reamer"),
+        )
+
+    def test_spare_type_at_name_start(self):
+        self.assertEqual(classify("Оснастка", "Прочее", "Винт прижима 0894106021"),
+                         ("accessory", "spare_part"))
+        self.assertEqual(classify("Оснастка", "Запасные части для державок и фрез", "Прижим 0894106020"),
+                         ("accessory", "spare_part"))
+
+    def test_section_rules_over_name_hints(self):
+        self.assertEqual(classify("Метчики", "Метчики метрические", "Метчик машинный М10х1.5"),
+                         ("tap", "machine_tap"))
+        self.assertEqual(classify("Фрезы", "Фрезы концевые", "Фреза концевая 10x25x75 3F"),
+                         ("mill", "end_mill"))
+        self.assertEqual(classify("Развертки", "Машинные развертки", "Развертка машинная 8 H7"),
+                         ("reamer", "machine_reamer"))
+
     def test_unknown_section_is_quarantined(self):
         self.assertEqual(classify("Неведомый раздел", "Неведомая подгруппа"), ("other", "other"))
+
+
+class SnapshotClassificationTest(unittest.TestCase):
+    """Приёмка T1: в снимке у метчиков, фрез и развёрток нет category=spare_part."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.items = load_site_catalog()
+
+    def test_snapshot_exists(self):
+        if not self.items:
+            self.skipTest("снимок data/catalog_site.csv не собран")
+
+    def test_tools_are_not_spare_parts(self):
+        if not self.items:
+            self.skipTest("снимок data/catalog_site.csv не собран")
+        wrong = [
+            (it["sku"], it["section"], it["name"])
+            for it in self.items
+            if it["section"] in ("Метчики", "Фрезы", "Развертки")
+            and it["category"] == "spare_part"
+        ]
+        self.assertEqual(wrong[:5], [])
+
+    def test_spare_parts_live_in_spare_subsection(self):
+        if not self.items:
+            self.skipTest("снимок data/catalog_site.csv не собран")
+        wrong = [
+            (it["sku"], it["section"], it["subsection"])
+            for it in self.items
+            if it["category"] == "spare_part"
+            and "запасные части" not in (it["section"] + " " + it["subsection"]).lower()
+        ]
+        self.assertEqual(wrong[:5], [])
 
 
 class ParseAttrsTest(unittest.TestCase):

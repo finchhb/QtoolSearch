@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+.ruff_cache/
 
 # Секреты и локальная конфигурация
 .env

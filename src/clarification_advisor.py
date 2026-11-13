@@ -1,9 +1,11 @@
 """
 src/clarification_advisor.py - Модуль анализа полноты параметров и генерации уточняющих вопросов
 """
-from typing import Dict, List, Optional
 import re
-from src.materials_mapping import detect_iso_group, detect_application_type, detect_insert_shape, detect_corner_radius
+from typing import Dict
+
+from src.materials_mapping import detect_application_type, detect_corner_radius, detect_insert_shape, detect_iso_group
+
 
 class ClarificationAdvisor:
     def __init__(self):

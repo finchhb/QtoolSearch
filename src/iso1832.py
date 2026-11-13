@@ -6,8 +6,7 @@ src/iso1832.py — детерминированный разбор обозна�
 """
 import math
 import re
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Dict, List, Tuple
 
 RUS_SHAPES = {
     "ромб": "C", "треугольник": "T", "квадрат": "S", "круг": "R", "круглая": "R",

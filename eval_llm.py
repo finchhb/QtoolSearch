@@ -37,7 +37,6 @@ def main():
     items = json.load(open("data/llm_benchmark.json", encoding="utf-8"))
     if "--limit" in sys.argv:
         items = items[: int(sys.argv[sys.argv.index("--limit") + 1])]
-    ok = lambda got, exp: (not exp) or got == exp  # noqa: E731
     stat = {k: 0 for k in ("n", "p_iso", "l_iso", "c_iso", "p_op", "l_op", "c_op", "op_n", "bad_json", "api_err")}
     lat, tokens, rows = [], 0, []
     print(f"Модели: {llm.model} | {llm.base_url} | запросов: {len(items)}\n")

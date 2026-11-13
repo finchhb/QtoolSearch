@@ -133,9 +133,9 @@ class LLMClient:
         for name in list(headers):
             try:
                 str(headers[name]).encode("latin-1")
-            except UnicodeEncodeError:
+            except UnicodeEncodeError as exc:
                 if name.lower() == "authorization":
-                    raise LLMError(f"{model}: ключ LLM содержит не-ASCII символы — проверьте LLM_API_KEY", 401)
+                    raise LLMError(f"{model}: ключ LLM содержит не-ASCII символы — проверьте LLM_API_KEY", 401) from exc
                 headers.pop(name, None)
         payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
         payload.update(self.extra_params)

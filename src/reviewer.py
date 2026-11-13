@@ -19,7 +19,7 @@ import re
 import threading
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 LOG_PATH = os.path.join("data", "review_log.jsonl")
 

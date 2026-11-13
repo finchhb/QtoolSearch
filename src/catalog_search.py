@@ -15,30 +15,13 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from src import rates
-from src.site_catalog import _RE_DIA, _RE_MM, _RE_TRIPLE, _dims, extract_common, extract_teeth, extract_thread
+from src.code_normalize import cyrillic_code_letters, homoglyph_latin, layout_to_latin
+from src.iso5608 import parse_holder_code
+from src.site_catalog import _RE_DIA, _RE_MM, _dims, extract_common, extract_teeth, extract_thread
 
 # --------------------------------------------------------------------------------------------------
 # Нормализация
 # --------------------------------------------------------------------------------------------------
-_RU_TO_EN = {
-    "й": "q", "ц": "w", "у": "e", "к": "r", "е": "t", "н": "y", "г": "u", "ш": "i", "щ": "o", "з": "p",
-    "х": "[", "ъ": "]", "ф": "a", "ы": "s", "в": "d", "а": "f", "п": "g", "р": "h", "о": "j", "л": "k",
-    "д": "l", "ж": ";", "э": "'", "я": "z", "ч": "x", "с": "c", "м": "v", "и": "b", "т": "n", "ь": "m",
-    "б": ",", "ю": ".",
-}
-_HOMOGLYPHS = {
-    "а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
-    "у": "y", "х": "x", "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P",
-    "С": "C", "Т": "T", "У": "Y", "Х": "X",
-}
-
-_RU_CODE_LETTERS = {
-    "а": "a", "в": "v", "г": "g", "д": "d", "е": "e", "ж": "zh", "з": "z", "и": "i", "й": "j",
-    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "c", "т": "t",
-    "у": "y", "ф": "f", "х": "x", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y",
-    "ь": "", "э": "e", "ю": "yu", "я": "ya",
-}
-
 _WORD_RE = re.compile(r"[a-zа-я0-9]+(?:[.,/][a-zа-я0-9]+)*")
 
 # Материал обработки -> группа ISO (порядок важен: «жаропрочная сталь» — это S, «12Х18Н10Т» — M)
@@ -80,27 +63,6 @@ def fmt_num(value: Any) -> str:
     return str(value)
 
 
-def layout_to_latin(s: str) -> str:
-    return "".join(_RU_TO_EN.get(ch, ch) for ch in s.lower())
-
-
-def homoglyph_latin(s: str) -> str:
-    return "".join(_HOMOGLYPHS.get(ch, ch) for ch in s)
-
-
-def cyrillic_code_letters(s: str) -> str:
-    """Кириллица по буквам кода: «РПМТ» -> RPMT (регистр сохраняется)."""
-    out = []
-    for ch in s:
-        low = ch.lower()
-        if low in _RU_CODE_LETTERS:
-            tr = _RU_CODE_LETTERS[low]
-            out.append(tr.upper() if ch.isupper() else tr)
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
 def query_variants(q: str) -> List[str]:
     """Варианты написания кода: как есть, омоглифы, неверная раскладка, кириллица по буквам кода."""
     base = (q or "").lower().replace("ё", "е")
@@ -124,7 +86,7 @@ def _fix_digit_letters(s: str) -> str:
 
 _HOLDER_PREFIXES = {
     "PCLN", "MCLN", "PWLN", "MWLN", "PTGN", "MTGN", "PDJN", "MDJN", "MVJN", "PVJN",
-    "PSSN", "MSSN", "SCLC", "SDJC", "STGC", "SVJB", "SVJC", "SDUC", "SCLC",
+    "PSSN", "MSSN", "SCLC", "SDJC", "STGC", "SVJB", "SVJC", "SDUC",
 }
 _INSERT_SHAPES = set("ABCDEHKLMOPRSTVW")
 
@@ -296,6 +258,7 @@ class Query:
         self.compat_prefix: Optional[str] = None
         self.compat_shape: Optional[str] = None
         self.compat_clearance: Optional[str] = None
+        self.compat_hole: Optional[str] = None
         self.compat_size: Optional[str] = None
         self.compat_requested = False
         self.holder_compat: Optional[Dict[str, Any]] = None
@@ -529,6 +492,7 @@ class Query:
         self.compat_prefix = info["prefix"]
         self.compat_shape = info["shape"]
         self.compat_clearance = info["clearance"]
+        self.compat_hole = info.get("hole")
         self.compat_size = info["size"]
 
 
@@ -543,6 +507,18 @@ TAP_DRILL = {
 
 HOLDER_SHAPE = {"C": "C", "D": "D", "V": "V", "W": "W", "T": "T", "S": "S", "R": "R", "K": "K"}
 INSERT_LETTER = {"C": "CNMG/CCMT", "D": "DNMG/DCMT", "V": "VNMG/VCMT", "W": "WNMG/WCMT", "T": "TNMG/TCMT", "S": "SNMG/SCMT", "R": "RNMG/RCMT"}
+
+# R1: тип зажима державки -> допустимые типы отверстия пластины (4-я буква ISO 1832).
+# C - без отверстия (N/R/F), D/M/P - цилиндрическое (A/M/G), S - коническое (T/W/Q/U).
+CLAMP_HOLE = {"C": set("NRF"), "D": set("AMG"), "M": set("AMG"), "P": set("AMG"), "S": set("TWQU")}
+
+
+def clamp_accepts_hole(clamp: Optional[str], hole: Optional[str]) -> bool:
+    """Зажим C требует пластину без отверстия, S - с коническим; неизвестное не ограничиваем."""
+    allowed = CLAMP_HOLE.get((clamp or "").upper())
+    if not allowed or not hole:
+        return True
+    return (hole or "").upper() in allowed
 
 
 def tap_drill_for(thread: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -561,48 +537,30 @@ def tap_drill_for(thread: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def holder_insert_hint(code: Optional[str]) -> Optional[str]:
-    if not code:
+    info = parse_holder_code(code)
+    if not info or not info.get("turning") or not info.get("insert_size"):
         return None
-    m = re.match(r"^[A-Z]([A-Z])([A-Z])[A-Z](\d{2})", code)
-    if not m:
-        return None
-    shape = m.group(2)
-    return f"{INSERT_LETTER.get(shape, shape)} {m.group(3)}xxxx"
-
-
-# Пять букв кода державки: зажим, форма, стиль, задний угол, рука (R/L/N),
-# затем сечение (2525), длина (M/K/P/H) и размер пластины (12/16).
-_HOLDER_CORE_RE = re.compile(
-    r"(?<![A-Z0-9])([A-Z])([A-Z])([A-Z])([A-Z])([LRN])(\d{2,4})?([A-Z])?[- ]?(\d{2})(?![0-9])"
-)
+    shape = info.get("shape")
+    return f"{INSERT_LETTER.get(shape, shape)} {info['insert_size']}xxxx"
 
 
 def holder_insert_compat(code: Optional[str]) -> Optional[Dict[str, Any]]:
-    """MCLNR2525M12 -> форма C, задний угол N, пластина 12, сечение 25 мм."""
-    if not code:
+    """MCLNR2525M12 -> форма C, задний угол N, пластина 12, сечение 25 мм.
+
+    Сам разбор кода - в iso5608; здесь оставляем поля, на которые опирается поиск.
+    """
+    info = parse_holder_code(code)
+    if not info:
         return None
-    m = _HOLDER_CORE_RE.search(code.upper())
-    if not m:
-        return None
-    shank = None
-    block = m.group(6) or ""
-    if len(block) == 4:
-        hi, lo = int(block[:2]), int(block[2:])
-        if 8 <= hi <= 50 and 8 <= lo <= 50:
-            shank = float(hi)
-    size = m.group(8)
-    # «MCLNR2525» / «MCLNR 2525»: цифры после букв — это сечение, а не размер пластины
-    rest = m.group(0)[5:].lstrip("- ")
-    if len(block) != 4 and not m.group(7) and re.fullmatch(r"(\d{2})\1", rest):
-        side = int(rest[:2])
-        if 8 <= side <= 50:
-            shank = float(side)
-        size = None
     return {
-        "shape": m.group(2),
-        "clearance": m.group(4),
-        "size": size,
-        "shank_mm": shank,
+        "shape": info.get("shape"),
+        "clearance": info.get("clearance"),
+        "size": info.get("insert_size"),
+        "shank_mm": info.get("shank_mm"),
+        "clamp": info.get("clamp"),
+        "kind": info.get("kind"),
+        "series_key": info.get("series_key"),
+        "turning": bool(info.get("turning")),
     }
 
 
@@ -617,6 +575,7 @@ def insert_compat_key(code: Optional[str]) -> Dict[str, Any]:
         "prefix": pref,
         "shape": pref[0],
         "clearance": pref[1] if len(pref) >= 2 else None,
+        "hole": pref[3] if len(pref) >= 4 else None,
         "size": digits[:2] if len(digits) >= 2 else None,
     }
 
@@ -917,6 +876,8 @@ class CatalogSearchEngine:
             return False
         if q.compat_size and info.get("size") != q.compat_size:
             return False
+        if not clamp_accepts_hole(info.get("clamp"), q.compat_hole):
+            return False
         return True
 
     @staticmethod
@@ -934,6 +895,8 @@ class CatalogSearchEngine:
         if pref[0] != info.get("shape"):
             return False
         if info.get("clearance") and len(pref) > 1 and pref[1] != info["clearance"]:
+            return False
+        if not clamp_accepts_hole(info.get("clamp"), pref[3] if len(pref) >= 4 else None):
             return False
         return digits[:2] == str(info["size"])
 
@@ -1180,7 +1143,6 @@ class CatalogSearchEngine:
         out = []
         tokens = q.free_tokens
         for it in pool:
-            attrs = it.get("attrs") or {}
             if in_stock_only and it.get("stock", 0) <= 0:
                 continue
             if not it.get("active", True) and it.get("stock", 0) <= 0:
