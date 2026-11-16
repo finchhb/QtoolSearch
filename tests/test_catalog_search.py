@@ -850,10 +850,13 @@ class HolderFromPlateSpecTest(unittest.TestCase):
         res = self.engine.search("державка 1616 под пластина Левая. Ромб. Размер 09")
         self.assertEqual([p["sku"] for p in res["products"]], ["SCLCL1616H09"])
 
-    def test_bare_shank_matches_square_and_round(self):
+    def test_bare_shank_means_round_diameter(self):
+        # «хвост 16» — круглый хвостовик Ø16, квадрат 16×16 не подходит
+        q = Query("державка хвост 16 под пластина Правая. Ромб. Размер 09")
+        self.assertTrue(q.shank_round)
         res = self.engine.search("державка хвост 16 под пластина Правая. Ромб. Размер 09")
-        self.assertEqual({p["sku"] for p in res["products"]}, {"S16Q-SCLCR09", "SCLCR1616H09"})
-        self.assertIn("хвостовик: 16 мм", res["chips"])
+        self.assertEqual([p["sku"] for p in res["products"]], ["S16Q-SCLCR09"])
+        self.assertIn("хвост: Ø16 мм", res["chips"])
 
 
 class ChuckAccessoryTest(unittest.TestCase):

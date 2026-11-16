@@ -631,7 +631,9 @@ class Query:
                     # хвост зажимаемого инструмента, а не хвостовик самого держателя
                     self.attrs["clamp_mm"] = val
                 else:
+                    # «хвост 16» — круглый хвостовик диаметром 16 мм, а не квадрат 16×16
                     self.attrs["shank_mm"] = val
+                    self.shank_round = True
 
         if self.family == "holder" and "shank_mm" not in self.attrs:
             # «державка расточная S20»: буква типа хвоста и диаметр, как в начале кода ISO 5608
@@ -1190,18 +1192,14 @@ class CatalogSearchEngine:
             if q.holder_code:
                 out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
             if a.get("shank_mm"):
-                if self._round_shank(q):
-                    # «расточная державка с хвостом 25»: сравниваем диаметр круглого хвоста
-                    out.append(("диаметр хвоста", True, lambda it: self._near(
-                        it["attrs"].get("shank_diameter_mm"), a["shank_mm"], 0.5)))
-                elif a.get("shank_section"):
+                if a.get("shank_section"):
                     out.append(("сечение", True, lambda it: (
                         not it["attrs"].get("shank_diameter_mm")
                         and self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5))))
                 else:
-                    # «хвост 16» без сечения: подходит и квадрат 16×16, и круглый Ø16
-                    out.append(("хвостовик", True, lambda it: self._near(
-                        it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
+                    # «хвост 16», S20: круглый хвостовик, сравниваем диаметр
+                    out.append(("диаметр хвоста", True, lambda it: self._near(
+                        it["attrs"].get("shank_diameter_mm"), a["shank_mm"], 0.5)))
         elif fam == "countersink":
             if a.get("diameter_mm"):
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.2)))
