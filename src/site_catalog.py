@@ -35,6 +35,48 @@ QTOOL_BASE = "https://qtool.ru"
 PLATES_TEMPLATE = QTOOL_BASE + "/upload/V/smennie_plastini_ISO_tochenie_{date}.xlsx"
 PRICE_URLS = [QTOOL_BASE + "/downloads/price.xlsx", QTOOL_BASE + "/upload/price.xlsx"]
 SITEMAP_CATALOG = QTOOL_BASE + "/sitemap-iblock-28.xml"
+TABLES_URL = QTOOL_BASE + "/upload/l/"
+
+# Детальные выгрузки по группам: имя файла -> (раздел, группа/категория).
+# Раздел нужен файлам без колонки «Название раздела», группа — запасной вариант,
+# если раздел листа не описан в SUBSECTION_MAP.
+TABLE_DEFAULTS: Dict[str, Tuple[str, Tuple[str, str]]] = {
+    "1_rezbovye_plastiny.xlsx": ("Резьбовые пластины", ("insert", "threading_insert")),
+    "2_otreznye_i_kanavochnye_plastiny.xlsx": ("Отрезные и канавочные пластины", ("insert", "grooving_insert")),
+    "3_plastiny_dlya_frez.xlsx": ("Пластины для фрез", ("insert", "milling_insert")),
+    "4_patrony.xlsx": ("Патроны и оправки", ("accessory", "chuck")),
+    "5_cangi.xlsx": ("Цанги", ("accessory", "collet")),
+    "6_vtulki_perehodnye.xlsx": ("Втулки переходные", ("accessory", "adapter")),
+    "7_kulachki.xlsx": ("Кулачки", ("accessory", "machine_jaw")),
+    "8_patrony.xlsx": ("Патроны токарные", ("accessory", "chuck")),
+    "9_tiski.xlsx": ("Тиски", ("accessory", "machine_vice")),
+    "10_prizhimy_i_prihvaty.xlsx": ("Прижимы и прихваты", ("accessory", "clamp_set")),
+    "11_otreznye_lezviya_i_bloki.xlsx": ("Отрезные лезвия и блоки", ("mill", "saw_blade")),
+    "12_stoly_dlya_stankov.xlsx": ("Столы для станков", ("accessory", "machine_table")),
+    "13_vrashchayushchiesya_centry_dlya_tokarnyh_stankov.xlsx": (
+        "Вращающиеся центры для токарных станков", ("accessory", "center")),
+    "14_rastochnye_sistemy.xlsx": ("Расточные системы", ("holder", "holder_internal")),
+    "15_derzhateli_osevogo_instrumenta.xlsx": ("Держатели осевого инструмента", ("accessory", "tool_holder")),
+    "16_aksessuary_stanochnye.xlsx": ("Аксессуары станочные", ("accessory", "accessory")),
+    "2_1_derzhavki_dlya_naruzhnogo_tocheniya.xlsx": (
+        "Державки для наружного точения", ("holder", "holder_external")),
+    "2_2_derzhavki_dlya_obrabotki_vnutrennikh_kanavok.xlsx": (
+        "Державки для обработки внутренних канавок", ("holder", "holder_grooving")),
+    "2_3_derzhavki_dlya_vnutrennego_tocheniya.xlsx": (
+        "Державки для внутреннего точения", ("holder", "holder_internal")),
+    "2_4_frezy.xlsx": ("Фрезы", ("mill", "end_mill")),
+    "2_5_Izmeritelnye_instrumenty.xlsx": ("Измерительные инструменты", ("accessory", "measuring")),
+    "2_6_metchiki.xlsx": ("Метчики", ("tap", "machine_tap")),
+    "2_7_minireztsy.xlsx": ("Минирезцы", ("holder", "mini_tool")),
+    "2_8_plashki.xlsx": ("Плашки", ("die", "threading_die")),
+    "2_9_plastiny_so_vstavkami_PCBNPCD.xlsx": (
+        "Пластины с напайками PCBN/PCD", ("insert", "turning_insert")),
+    "2_10_smennye_plastiny_dlya_frez.xlsx": ("Пластины для фрез", ("insert", "milling_insert")),
+    "2_11_smennye_plastiny_dlya_sverl.xlsx": ("Пластины для сверл", ("insert", "drill_insert")),
+    "2_12_sverla_po_metallu.xlsx": ("Свёрла по металлу", ("drill", "hss_drill")),
+    "2_13_zapasnye_chasti_dlya_derzhavok_i_frez.xlsx": (
+        "Запасные части для державок и фрез", ("accessory", "spare_part")),
+}
 
 FIELDS = [
     "id", "sku", "name", "brand", "family", "category", "section", "subsection",
@@ -76,6 +118,7 @@ SUBSECTION_MAP = {
     "твердосплавные дисковые отрезные фрезы": ("mill", "slot_mill"),
     "фрезы для т-образных пазов с твердосплавными напайными пластинами": ("mill", "slot_mill"),
     "фрезы со сменными пластинами": ("mill", "face_mill"),
+    "со сменными пластинами": ("mill", "face_mill"),
     "торцевые насадные фрезы": ("mill", "face_mill"),
     "фрезы концевые ц/х с твердосплавными напайными пластинами": ("mill", "end_mill"),
     "державки для наружного точения": ("holder", "holder_external"),
@@ -97,6 +140,35 @@ SUBSECTION_MAP = {
     "измерительные инструменты": ("accessory", "measuring"),
     "станки": ("accessory", "machine"),
     "ручной и слесарный инструмент": ("accessory", "hand_tool"),
+    "прижим для фрезерного станка": ("accessory", "clamp_set"),
+    "прихват для фрезерного станка": ("accessory", "clamp_set"),
+    "лезвия отрезные": ("mill", "saw_blade"),
+    "блоки отрезные": ("mill", "saw_blade"),
+    "поворотные столы для фрезерного станка": ("accessory", "machine_table"),
+    "столы для заточного станка": ("accessory", "machine_table"),
+    "вращающиеся центры для токарных станков": ("accessory", "center"),
+    "держатели осевого инструмента": ("accessory", "tool_holder"),
+    # цанги и их оснастка: «ER цанги», «наборы цанг», «гайки для цанговых патронов»
+    "цанг": ("accessory", "collet"),
+    "кулачк": ("accessory", "machine_jaw"),
+    "тиск": ("accessory", "machine_vice"),
+    "сопл": ("accessory", "coolant"),
+    "сож": ("accessory", "coolant"),
+    "соединит": ("accessory", "adapter"),
+    "адаптер": ("accessory", "adapter"),
+    "разъем": ("accessory", "adapter"),
+    "круги для станков": ("accessory", "grinding_wheel"),
+    "ключи": ("accessory", "hand_tool"),
+    "клещи": ("accessory", "hand_tool"),
+    "крепеж": ("accessory", "spare_part"),
+    "резьбовые вставки": ("insert", "threading_insert"),
+    "метчикодержатели": ("accessory", "tool_holder"),
+    "пластины для перовых свёрл": ("insert", "drill_insert"),
+    "оправка для перовых свёрл": ("accessory", "tool_holder"),
+    # расточные системы: головки, картриджи и держатели пластин
+    "патроны для расточных головок": ("accessory", "chuck"),
+    "расточ": ("holder", "holder_internal"),
+    "патроны оправки для станков": ("accessory", "chuck"),
 }
 
 # Подразделы оснастки: определяем по типу крепления/принадлежности.
@@ -123,6 +195,32 @@ NAME_FAMILY_HINTS = [
 
 UNKNOWN_SECTIONS: List[str] = []
 
+# Подгруппа внутри семейства по названию группы в выгрузке («Со сменными пластинами»,
+# «Дисковые отрезные», «Корпус сверла»): от неё зависит разбор размеров из названия.
+_MILL_SUBCATEGORY = [
+    (r"со сменными пластин|корпусн|торцев|насадн|сменная головка|головка с пластин", "face_mill"),
+    (r"дисков|пазов|трехсторон|отрезн", "slot_mill"),
+    (r"борфрез", "burr"),
+    (r"резьбофрез", "thread_mill"),
+    (r"сферич|шарова", "ball_mill"),
+    (r"радиусн", "radius_mill"),
+]
+_DRILL_SUBCATEGORY = [
+    (r"корпус", "indexable_drill_body"),
+    (r"головк", "drill_head"),
+    (r"корончат", "crown_drill"),
+    (r"центровочн", "center_drill"),
+    (r"твердосплав", "solid_carbide_drill"),
+]
+
+
+def _refine_subcategory(family: str, category: str, sub: str) -> str:
+    rules = _MILL_SUBCATEGORY if family == "mill" else _DRILL_SUBCATEGORY if family == "drill" else []
+    for pattern, cat in rules:
+        if re.search(pattern, sub):
+            return cat
+    return category
+
 # Тип товара в начале названия: только тогда это запчасть (а не «винтовая фреза»).
 _RE_SPARE_NAME = re.compile(
     r"^(?:винт|винты|винта|гайка|гайки|гаек|шайба|шайбы|шайб|пружина|пружины|пружинная|пружинные|ключ|ключи)\b"
@@ -136,7 +234,8 @@ def _norm(text: str) -> str:
 SUBSECTION_MAP_NORM = {_norm(k): v for k, v in SUBSECTION_MAP.items()}
 
 
-def classify(section: str, subsection: str, name: str = "") -> Tuple[str, str]:
+def classify(section: str, subsection: str, name: str = "",
+             fallback: Optional[Tuple[str, str]] = None) -> Tuple[str, str]:
     sub = _norm(subsection)
     sec = _norm(section)
     low_name = _norm(name)
@@ -152,30 +251,43 @@ def classify(section: str, subsection: str, name: str = "") -> Tuple[str, str]:
             if hint in sub:
                 pair = ("accessory", cat)
                 break
-    if pair is None:
-        for pattern, val in NAME_FAMILY_HINTS:
-            if re.search(pattern, low_name):
-                pair = val
-                if val[1] == "insert":
-                    pair = ("insert", "milling_insert" if "фрез" in low_name else "turning_insert")
-                elif val[1] == "hss_drill" and "твердосплав" in low_name:
-                    pair = ("drill", "solid_carbide_drill")
-                break
+    name_pair: Optional[Tuple[str, str]] = None
+    for pattern, val in NAME_FAMILY_HINTS:
+        if re.search(pattern, low_name):
+            name_pair = val
+            if val[1] == "insert":
+                name_pair = ("insert", "milling_insert" if "фрез" in low_name else "turning_insert")
+            elif val[1] == "hss_drill" and "твердосплав" in low_name:
+                name_pair = ("drill", "solid_carbide_drill")
+            break
+    # В детальной выгрузке группа задана разделом файла: «патрон для концевых фрез» — это
+    # патрон, а не фреза, поэтому имя уточняет группу только в пределах семейства файла.
+    # В детальной выгрузке группа задана разделом файла: «патрон для концевых фрез» — это
+    # патрон, а не фреза, поэтому имя уточняет группу только в пределах семейства файла
+    # и только когда категория файла общая (концевая фреза, сверло HSS, пластина для точения).
+    generic = {"end_mill", "hss_drill", "turning_insert", "milling_insert", "machine_tap",
+               "threading_die", "accessory", "spare_part"}
+    if (pair is None and name_pair is not None
+            and (fallback is None or (name_pair[0] == fallback[0] and fallback[1] in generic))):
+        pair = name_pair
 
     # Крепёж и ключи — запчасть, только когда это тип товара (начало названия), а не слово
     # внутри: «винт. кан.» метчика, «винтовая фреза», «с открытым винтом» остаются инструментом.
-    if _RE_SPARE_NAME.match(low_name):
+    if fallback is None and _RE_SPARE_NAME.match(low_name):
         return "accessory", "spare_part"
-    if (pair is None or pair[0] == "accessory") and "державк" in low_name and "сверл" in low_name:
+    if fallback is None and (pair is None or pair[0] == "accessory") and "державк" in low_name and "сверл" in low_name:
         return "drill", "drill_holder"
-    if "лезвие" in low_name or "гратосним" in low_name:
+    if fallback is None and ("лезвие" in low_name or "гратосним" in low_name):
         return "countersink", "deburring_blade"
     if pair is not None:
-        return pair
+        return pair[0], _refine_subcategory(pair[0], pair[1], f"{sub} {low_name}")
 
     for section_hint, cat in (("измерительн", "measuring"), ("слесарн", "hand_tool"), ("станк", "machine")):
         if section_hint in sec:
             return "accessory", cat
+    if fallback is not None:
+        # раздел не описан в справочнике, но файл знает свою группу — берём её
+        return fallback[0], _refine_subcategory(fallback[0], fallback[1], f"{sub} {low_name}")
     key = f"{section} > {subsection}".strip(" >")
     if key not in UNKNOWN_SECTIONS:
         UNKNOWN_SECTIONS.append(key)
@@ -496,6 +608,16 @@ def parse_attrs(family: str, category: str, name: str, tech: str, cols: Dict[str
         t = extract_thread(src)
         if t.get("thread") and category in ("reamer", "hand_reamer"):
             a.update(t)
+        if cols:
+            d = _f(cols.get("DIAMETER_D"))
+            if d:
+                a["diameter_mm"] = d
+            lc = _f(cols.get("WORKING_LENGTH"))
+            if lc:
+                a["cutting_length_mm"] = lc
+            total_l = _f(cols.get("TOTAL_LENGTH"))
+            if total_l:
+                a["length_mm"] = total_l
     elif family == "mill":
         dims = _dims(src)
         if dims:
@@ -543,6 +665,13 @@ def parse_attrs(family: str, category: str, name: str, tech: str, cols: Dict[str
             r = re.search(rf"R\s*({_NUM})", src, re.I)
             if r:
                 a["radius_mm"] = float(r.group(1).replace(",", "."))
+        if cols:
+            d = _f(cols.get("MILLING_CUTTER_DIAMETER_MM"))
+            if d:
+                a["diameter_mm"] = d
+            z = _i(cols.get("NUMBER_OF_TEETH"))
+            if z:
+                a["teeth"] = z
         if category == "thread_mill" or "резьбофрез" in src.lower():
             a.update({k: v for k, v in extract_thread(src).items() if k in ("thread", "pitch_mm", "diameter_mm")})
         if category == "slot_mill" and "дисков" in src.lower() and dims:
@@ -708,7 +837,9 @@ def parse_price_layout(sheets: Sequence[Sheet]) -> Tuple[List[Dict[str, Any]], D
     return items, info
 
 
-def parse_bitrix_layout(sheets: Sequence[Sheet]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def parse_bitrix_layout(sheets: Sequence[Sheet], default_section: str = "",
+                        default_pair: Optional[Tuple[str, str]] = None
+                        ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Детальная выгрузка Битрикса: ID элемента + колонки [ATT_*]."""
     items: List[Dict[str, Any]] = []
     info: Dict[str, Any] = {"layout": "bitrix", "rows": 0, "sheets": [], "schema": {}}
@@ -725,9 +856,12 @@ def parse_bitrix_layout(sheets: Sequence[Sheet]) -> Tuple[List[Dict[str, Any]], 
                 continue
             name = (cols.get("наименование элемента") or "").strip()
             tech = (cols.get("techname") or "").strip()
-            section = (cols.get("название раздела") or "").strip() or "Пластины для точения"
-            subsection = section
-            family, category = classify(section, subsection, name or tech)
+            section = ((cols.get("название раздела") or "").strip() or default_section
+                       or "Пластины для точения")
+            # «Группа [GRUPPA]» в новых выгрузках уточняет подраздел: «Корпус сверла», «Борфрезы»
+            group = (cols.get("GRUPPA") or "").strip()
+            subsection = group or section
+            family, category = classify(section, subsection, name or tech, fallback=default_pair)
             attrs = parse_attrs(family, category, name, tech, cols)
             price = _f(cols.get("цена \"цена продажи\"")) or _f(cols.get('цена "цена"')) or 0.0
             if str(cols.get("ндс включен в цену?", "")).strip().upper() == "N" and price > 0:
@@ -767,10 +901,11 @@ def detect_and_parse(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         for row in sh.rows[:12]:
             head_flat.extend(row)
     low = " | ".join(h.lower() for h in head_flat if h)
+    default_section, default_pair = TABLE_DEFAULTS.get(os.path.basename(path), ("", None))
     items: List[Dict[str, Any]] = []
     infos = []
     if "id элемента" in low:
-        it, inf = parse_bitrix_layout(sheets)
+        it, inf = parse_bitrix_layout(sheets, default_section, default_pair)
         items.extend(it); infos.append(inf)
     if "артикул товара" in low:
         it, inf = parse_price_layout(sheets)
@@ -1027,17 +1162,33 @@ def refresh(dest_dir: str = UPLOAD_DIR) -> Dict[str, Any]:
     """Скачать свежие таблицы, обновить ссылки и пересобрать каталог."""
     os.makedirs(dest_dir, exist_ok=True)
     prev = _read_manifest()
-    prev_sources = {s.get("url"): s for s in (prev.get("sources") or [])}
+    prev_meta = {d.get("url"): d for d in (prev.get("downloads") or [])}
     downloaded = []
+    failed = []
     price_url = next((u for u in PRICE_URLS if _url_exists(u)), PRICE_URLS[0])
-    downloaded.append(download_file(price_url, os.path.join(dest_dir, "price.xlsx"), prev_sources.get(price_url)))
+    price_dest = os.path.join(dest_dir, "price.xlsx")
+    downloaded.append(download_file(price_url, price_dest, prev_meta.get(price_url)))
+    plates_dest = os.path.join(dest_dir, "plates.xlsx")
     plates_url = discover_plates_url()
-    if not plates_url:
-        raise RuntimeError("Не найден свежий файл детальной выгрузки пластин (QTOOL_PLATES_URL не задан)")
-    downloaded.append(download_file(plates_url, os.path.join(dest_dir, "plates.xlsx"), prev_sources.get(plates_url)))
+    if plates_url:
+        downloaded.append(download_file(plates_url, plates_dest, prev_meta.get(plates_url)))
+    else:
+        failed.append("Не найден свежий файл детальной выгрузки пластин")
+    files = [price_dest, plates_dest]
+    for name in TABLE_DEFAULTS:
+        url = TABLES_URL + urllib.parse.quote(name)
+        dest = os.path.join(dest_dir, name)
+        try:
+            downloaded.append(download_file(url, dest, prev_meta.get(url)))
+        except RuntimeError as exc:
+            failed.append(str(exc))
+        if os.path.exists(dest):
+            files.append(dest)
     urls = fetch_site_urls()
-    rep = build_site_catalog([os.path.join(dest_dir, "price.xlsx"), os.path.join(dest_dir, "plates.xlsx")], urls)
+    rep = build_site_catalog([f for f in files if os.path.exists(f)], urls)
     rep["downloads"] = downloaded
+    if failed:
+        rep.setdefault("warnings", []).extend(failed)
     # манифест перезаписывается ещё раз, чтобы сохранить условный GET для следующего запуска
     _atomic_write_json(MANIFEST, rep)
     return rep

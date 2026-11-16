@@ -25,7 +25,11 @@ _cache: Dict[str, Any] = {"mtime": 0.0, "rows": []}
 
 
 def normalize(text: str) -> str:
-    t = (text or "").lower().replace("ё", "е").translate(_LATIN2CYR)
+    t = (text or "").lower().replace("ё", "е")
+    # «велдон» и «weldon» — одно и то же слово: технолог может набрать в любой раскладке
+    t = re.sub(r"\bвелдон", "weldon", t)
+    t = re.sub(r"\bбт(?=\d)", "вт", t)
+    t = t.translate(_LATIN2CYR)
     t = re.sub(r"[^\w\-]+", " ", t, flags=re.U)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -147,7 +151,7 @@ def lookup(query: str) -> Optional[Dict[str, str]]:
 
     q_norm = normalize(query)
     for r in rows:
-        if r.get("query_norm") == q_norm:
+        if normalize(r.get("query") or "") == q_norm:
             return r
 
     q_tokens = _tokenize(query)
@@ -189,6 +193,28 @@ def lookup(query: str) -> Optional[Dict[str, str]]:
     if best_match and best_score >= 0.35:
         return best_match
     return None
+
+
+def lookup_exact(query: str) -> Optional[Dict[str, str]]:
+    """Точно тот же запрос, что и в примере технолога: только для него ответ считаем эталонным."""
+    if os.environ.get("TRAINING_DISABLE") == "1":
+        return None
+    q_norm = normalize(query)
+    if not q_norm:
+        return None
+    with _lock:
+        rows = list(_read())
+    for r in rows:
+        if r.get("status") == "rejected":
+            continue
+        if normalize(r.get("query") or "") == q_norm:
+            return r
+    return None
+
+
+def split_skus(value: str) -> List[str]:
+    """«BT40-SL20-10; BT40-SL20-90» -> список позиций из ответа технолога."""
+    return [s.strip() for s in re.split(r"[;,\n]+", value or "") if s.strip()]
 
 
 def suggest_tokens(query: str) -> List[str]:

@@ -308,6 +308,9 @@ CATEGORY_HINTS = {
         ("tool_holder", r"осев[а-яё]*\s+инструмент|токарн[а-яё]*\s+блок"),
         # «кулачки», «комплект кулачков», но не «3-х кулачковый патрон» — это сам патрон
         ("machine_jaw", r"кулачк(?:а|и|ов|ам|ами|ах|у|ом)\b"),
+        # «цанга ER32», но не «цанговый патрон» — это патрон под цангу
+        ("collet", r"цанг(?:а|и|у|ой|ам|ами|ах)\b"),
+        ("machine_vice", r"тиск(?:и|ов|ам|ами|ах|)\b"),
     ],
 }
 
@@ -318,6 +321,8 @@ CATEGORY_TITLES = {
     "holder_threading": "резьбовая",
     "tool_holder": "держатель осевого инструмента",
     "machine_jaw": "кулачки",
+    "collet": "цанги",
+    "machine_vice": "тиски",
 }
 
 
@@ -435,9 +440,12 @@ class Query:
                                        "sk": "SK", "nt": "NT", "din": "DIN"}[tm.group(1)] + tm.group(2)
             if re.search(r"велдон|weldon", low):
                 self.attrs["weldon"] = True
-                dm = re.search(r"под\s+(?:велдон|weldon)\s*(?:на\s*)?(\d{1,2})(?!\d)", low)
+                # «под велдон 25», «weldon 20»: диаметр хвоста обычно идёт сразу за словом
+                dm = (re.search(r"(?:велдон|weldon)\D{0,12}?(\d{1,2}(?:[.,]\d+)?)(?!\d)", low)
+                      or re.search(r"(?<!\d)(\d{1,2}(?:[.,]\d+)?)\s*(?:мм\s*)?(?:велдон|weldon)", low))
                 if dm:
-                    self.attrs["tool_d_mm"] = int(dm.group(1))
+                    val = float(dm.group(1).replace(",", "."))
+                    self.attrs["tool_d_mm"] = int(val) if val == int(val) else val
             lm = re.search(r"(?:длин[а-яё]*|длиной)[\s:.—-]*(\d{2,3})(?!\d)", low)
             if lm:
                 self.attrs["tool_l_mm"] = int(lm.group(1))
@@ -660,7 +668,8 @@ class Query:
         m = re.search(r"(?:er|er-)\s?(\d{1,2})", low)
         if m and self.family == "accessory":
             self.attrs["collet_series"] = f"ER{m.group(1)}"
-            clamp = re.search(r"(?:er-?\d{1,2})\D{0,4}(\d{1,2}(?:[.,]\d)?)\s*(?:мм)?\b", low)
+            # «ER32 12», «ER32-12»: диаметр зажима идёт после серии; «ER16» — только серия
+            clamp = re.search(r"(?:er-?\d{1,2})(?!\d)\D{0,4}(\d{1,2}(?:[.,]\d)?)\s*(?:мм)?\b", low)
             if clamp:
                 self.attrs["clamp_mm"] = float(clamp.group(1).replace(",", "."))
 
@@ -1222,8 +1231,9 @@ class CatalogSearchEngine:
             if a.get("taper"):
                 out.append(("конус", True, lambda it: accessory_mount(it.get("name")).get("taper") == a["taper"]))
             if a.get("weldon"):
+                # серия SL/SLN — это и есть посадка Weldon (BT40-SL20-90, BT40-SLN-20-63)
                 out.append(("хвостовик Weldon", True, lambda it: bool(
-                    re.search(r"WELDON|SLN", str(it.get("name") or "").upper()))))
+                    re.search(r"WELDON|SLN|(?<![A-Z])SL(?=[\d-])", str(it.get("name") or "").upper()))))
             if a.get("tool_d_mm"):
                 out.append(("диаметр хвоста", True, lambda it: self._near(
                     accessory_mount(it.get("name")).get("d"), a["tool_d_mm"], 0.01)))
@@ -1372,7 +1382,8 @@ class CatalogSearchEngine:
         return compact(h) == compact(w)
 
     # ---- основной поиск --------------------------------------------------------------------------
-    def search(self, text: str, limit: int = 8, in_stock_only: bool = True) -> Dict[str, Any]:
+    def search(self, text: str, limit: int = 8, in_stock_only: bool = True,
+               pin_names: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         q = Query(text, self._insert_prefixes)
         if q.insert_code:
             q.insert_code = self._canonical_insert_code(q.insert_code)
@@ -1380,6 +1391,10 @@ class CatalogSearchEngine:
             fixed = self._canonical_insert_code(q.compat_insert)
             if fixed != q.compat_insert:
                 q._set_compat(fixed)
+        if pin_names:
+            pinned = self._search_pinned(q, pin_names, limit, in_stock_only)
+            if pinned:
+                return pinned
         if q.family is None:
             if q.compat_insert:
                 return self._search_compat(q, limit, in_stock_only)
@@ -1468,6 +1483,68 @@ class CatalogSearchEngine:
             "follow_ups": ["Уточните группу товара: пластина, сверло, фреза, метчик, державка."],
             "note": "Запрос без явной группы — показаны лучшие совпадения по разным группам.",
         }
+
+    @staticmethod
+    def _pinned_match(value: Any, want: str) -> bool:
+        """Артикул из ответа технолога совпадает с началом названия/артикула позиции."""
+        v = compact(str(value or ""))
+        w = compact(str(want or ""))
+        if not v or not w:
+            return False
+        if v == w:
+            return True
+        # «BT40-SL20-10» не должен цеплять «BT40-SL20-100»
+        return v.startswith(w) and not v[len(w):len(w) + 1].isdigit()
+
+    def _search_pinned(self, q: Query, names: Sequence[str], limit: int,
+                       in_stock_only: bool) -> Optional[Dict[str, Any]]:
+        """Ответ технолога из таблицы обучения: показываем именно названные позиции."""
+        pool, seen = [], set()
+        for fam_pool in self.by_family.values():
+            for it in fam_pool:
+                key = it.get("id") or id(it)
+                if key in seen:
+                    continue
+                if any(self._pinned_match(it.get("name"), n) or self._pinned_match(it.get("sku"), n)
+                       for n in names):
+                    pool.append(it)
+                    seen.add(key)
+        if not pool:
+            return None
+        results = self._collect(pool, q, [], [], False, q.family or "")
+        # ответ технолога показываем целиком: позиции «под заказ» идут после складских
+        with_stock = [r for r in results if (r[0].get("stock") or 0) > 0]
+        without = [r for r in results if (r[0].get("stock") or 0) <= 0]
+        results = with_stock + without
+        availability = ""
+        if in_stock_only and results and not with_stock:
+            availability = "нет в наличии — показаны позиции под заказ"
+        elif in_stock_only and without:
+            availability = "часть позиций под заказ"
+        fam = q.family or (pool[0].get("family") if pool else None)
+        cards = [self._card(it, score, q) for it, score in results]
+        # после названных технологом позиций — обычная выдача по запросу, без дублей
+        extra = (self._search_family(q, q.family, limit, in_stock_only) if q.family
+                 else self._search_ambiguous(q, limit, in_stock_only))
+        have = {compact(p.get("sku")) + compact(p.get("name")) for p in cards}
+        added = []
+        for p in extra.get("products") or []:
+            key = compact(p.get("sku")) + compact(p.get("name"))
+            if key in have:
+                continue
+            have.add(key)
+            added.append(p)
+        cards = (cards + added)[:limit]
+        out = {
+            "query": q.text, "family": fam, "groups": [],
+            "products": cards,
+            "parsed": dict(q.attrs), "chips": self._chips(q, fam), "level": "точное",
+            "total_found": len(results) + len(added), "relaxations": [], "follow_ups": [],
+            "category_hints": list(q.category_hints), "trained": True,
+        }
+        if availability:
+            out["availability"] = availability
+        return out
 
     def _search_family(self, q: Query, fam: str, limit: int, in_stock_only: bool) -> Dict[str, Any]:
         pool = self.by_family.get(fam, [])

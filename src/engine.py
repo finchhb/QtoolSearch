@@ -836,7 +836,10 @@ class ToolAdvisorEngine:
     # Каталог сайта qtool.ru: ответ по всем группам (без LLM)
     # ------------------------------------------------------------------------------------------
     def _site_answer(self, user_query: str, site: CatalogSearchEngine) -> Dict[str, Any]:
-        res = site.search(user_query, limit=8, in_stock_only=True)
+        # Точный пример технолога из таблицы обучения: показываем названные им позиции
+        example = training.lookup_exact(user_query)
+        pins = training.split_skus(example.get("correct_skus") or "") if example else []
+        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None)
         if not res.get("products"):
             self._log_unrecognized(user_query)
         attrs = res.get("parsed") or {}
