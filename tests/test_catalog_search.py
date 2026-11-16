@@ -949,5 +949,76 @@ class EngineRoutingTest(unittest.TestCase):
         self.assertIn("**Артикул:** `CNMG120408`", res["response_text"])
 
 
+class PilotSelftestTest(unittest.TestCase):
+    """Вопросы пилотного селфтеста: измерительный, патроны, корпуса свёрл, шпоночные фрезы."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine([
+            item("accessory", "measuring", "4124-5 калибр-пробка гладкий 5.0 Н7 Insize",
+                 sku="4124-5", stock=0, brand="Insize"),
+            item("accessory", "measuring", "4124-10 калибр-пробка гладкий 10.0 Н7 Insize",
+                 sku="4124-10", stock=0, brand="Insize"),
+            item("accessory", "measuring", "6282-2002 удлинитель для индикатора 15 мм стальной Insize",
+                 sku="6282-2002", stock=0, brand="Insize"),
+            item("accessory", "chuck", "ПСС-13 В16 патрон сверлильный самозажимной Sekira",
+                 sku="PSS13", stock=0, brand="Sekira"),
+            item("accessory", "chuck", "ПСС-16 В16 патрон сверлильный самозажимной Sekira",
+                 sku="PSS16", stock=0, brand="Sekira"),
+            item("accessory", "chuck", "KM4 B16 оправка для сверлильного патрона ГОСТ 2682-86 (z) Qtool",
+                 sku="83850", brand="Qtool"),
+            item("drill", "indexable_drill_body",
+                 "C20-3D09-29SO03 под пластину корпусное сверло Weila (DESKAR)",
+                 sku="C20-3D09-29SO03", stock=2, brand="DESKAR",
+                 diameter_mm=9.0, shank_mm=20.0, ld_ratio=3),
+            item("drill", "indexable_drill_body",
+                 "JCD C20-140-5D под головку корпусное сверло Weila (DESKAR)",
+                 sku="JCD C20-140-5D", stock=5, brand="DESKAR",
+                 diameter_mm=14.0, ld_ratio=5),
+            item("drill", "indexable_drill_body",
+                 "JCD C20-140-8D под головку корпусное сверло Weila (DESKAR)",
+                 sku="JCD C20-140-8D", stock=5, brand="DESKAR",
+                 diameter_mm=14.0, ld_ratio=8),
+            item("mill", "end_mill", "3х4х8х50 ц/х 2F AlCrN концевая фреза Deskar",
+                 sku="MILL3-2F", stock=35, brand="DESKAR", diameter_mm=3.0, teeth=2),
+            item("mill", "end_mill", "3х4х8х50 ц/х 4F AlCrN концевая фреза Deskar",
+                 sku="MILL3-4F", stock=35, brand="DESKAR", diameter_mm=3.0, teeth=4),
+            item("mill", "ball_mill", "D3х4х6х50 ц/х2F AlCrN сферическая фреза Deskar",
+                 sku="BALL3-2F", stock=61, brand="DESKAR", diameter_mm=3.0, teeth=2),
+        ])
+
+    def test_measuring_gauge_is_accessory_with_diameter_and_tolerance(self):
+        q = Query("калибр пробка гладкая диаметр 5 H7")
+        self.assertEqual(q.family, "accessory")
+        self.assertIn("measuring", q.category_hints)
+        self.assertEqual(q.attrs.get("tolerance"), "H7")
+        res = self.engine.search("калибр пробка гладкая диаметр 5 H7")
+        self.assertEqual([p["sku"] for p in res["products"]], ["4124-5"])
+
+    def test_measuring_article_code(self):
+        res = self.engine.search("6282-2002 инсайз")
+        self.assertEqual([p["sku"] for p in res["products"]], ["6282-2002"])
+
+    def test_self_tightening_chuck_by_capacity(self):
+        res = self.engine.search("сверлильный самозажимной патрон 1-16мм. B16")
+        self.assertEqual([p["sku"] for p in res["products"]], ["PSS16"])
+
+    def test_drill_with_square_insert_is_body_not_insert(self):
+        q = Query("сверло с квадратной пластиной. диаметр 9. 3d длина")
+        self.assertEqual(q.family, "drill")
+        self.assertIn("indexable_drill_body", q.category_hints)
+        res = self.engine.search("сверло с квадратной пластиной. диаметр 9. 3d длина")
+        self.assertEqual([p["sku"] for p in res["products"]], ["C20-3D09-29SO03"])
+
+    def test_drill_body_for_head_by_length_class(self):
+        res = self.engine.search("корпус сверла под головку 14 длинной 5d")
+        self.assertEqual([p["sku"] for p in res["products"]], ["JCD C20-140-5D"])
+
+    def test_keyway_mill_is_two_flute_end_mill(self):
+        res = self.engine.search("шпоночная твердосплавная фреза 3мм")
+        self.assertEqual(res["products"][0]["sku"], "MILL3-2F")
+        self.assertEqual(res["total_found"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

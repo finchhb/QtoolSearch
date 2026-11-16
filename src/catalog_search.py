@@ -134,6 +134,18 @@ def slot_mm_from_name(name: str) -> Optional[int]:
     m = re.search(r"паз\.?\s*(\d{1,2})(?!\d)", str(name or ""), re.I)
     return int(m.group(1)) if m else None
 
+
+def gauge_diameter(name: str) -> Optional[float]:
+    """«4124-5 калибр-пробка гладкий 5.0 Н7» -> 5.0: номинал гладкого калибра."""
+    m = re.search(r"гладк\w*\s*(\d+(?:[.,]\d+)?)", str(name or ""), re.I)
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
+def chuck_capacity(name: str) -> Optional[int]:
+    """«ПСС-16 В16» -> 16: верхний диаметр зажима серии самозажимного патрона."""
+    m = re.search(r"(?<![A-ZА-Я0-9])[A-ZА-Я]{2,5}-(\d{1,2})(?!\d)", str(name or "").upper())
+    return int(m.group(1)) if m else None
+
 # Порядок брендов в выдаче: сначала свои, внутри бренда — больше остатка выше.
 BRAND_PRIORITY = ("ZZKLT", "DESKAR", "OLICNC", "ZEGYO")
 _BRAND_RANK = {b.lower(): i for i, b in enumerate(BRAND_PRIORITY)}
@@ -278,9 +290,8 @@ CATEGORY_HINTS = {
     "drill": [
         ("center_drill", r"центровоч|центровк"),
         ("crown_drill", r"корончат"),
-        ("drill_head", r"головк"),
-        ("drill_body", r"корпус.*головк|под головк"),
-        ("indexable_drill_body", r"корпусн|сменн.*пластин|под пластину"),
+        ("drill_head", r"(?<!под )головк"),
+        ("indexable_drill_body", r"корпусн|сменн.*пластин|под пластину|под головк|сверл\w*[^,.]*пластин"),
         ("solid_carbide_drill", r"твердосплав|vhm"),
         ("hss_drill", r"hss|р6м5|p6m5|к/х"),
     ],
@@ -376,14 +387,30 @@ class Query:
         # слово «сверлильный» не должно уводить запрос в группу свёрл.
         if re.search(r"\bпатрон|\bприжим", low):
             self.family = "accessory"
+        elif re.search(r"калибр|инсайз|insize", low):
+            # «калибр-пробка 5 H7», «6282-2002 инсайз»: измерительный инструмент — оснастка
+            self.family = "accessory"
+            self.category_hints.append("measuring")
         else:
             for fam, pattern in FAMILY_KEYWORDS:
                 if re.search(pattern, low):
                     self.family = fam
                     break
+        # «сверло с квадратной пластиной» — корпус сверла под пластину, а не пластина:
+        # в группу пластин уводит только пластина, названная раньше сверла
+        if self.family == "insert" and re.search(r"сверл", low):
+            i_drill = low.find("сверл")
+            i_plate = low.find("пластин")
+            if i_plate < 0 or i_drill < i_plate:
+                self.family = "drill"
         for cat, pattern in CATEGORY_HINTS.get(self.family or "", []):
             if re.search(pattern, low):
                 self.category_hints.append(cat)
+        if self.family == "mill" and re.search(r"шпоночн", low):
+            # шпоночная фреза — двухзубая концевая: отсекаем сферические, резьбо- и ласточкины хвосты
+            self.attrs["flutes2"] = True
+            if "end_mill" not in self.category_hints:
+                self.category_hints.append("end_mill")
 
         # «пластина. Ромб. Размер 09. Радиус 02» — пластина описана словами, без кода
         if self.family in ("insert", "holder"):
@@ -418,6 +445,22 @@ class Query:
                 self.attrs["jaw_size"] = int(jm.group(3))
 
         if self.family == "accessory":
+            if "measuring" in self.category_hints:
+                # «6282-2002 инсайз»: артикул вида 0000-000 идёт в название позиции
+                cm = re.search(r"(?<![\d-])(\d{4}-\d{2,4})(?![\d-])", low)
+                if cm:
+                    self.attrs["measure_code"] = cm.group(1)
+                # «калибр-пробка 5 H7»: квалитет H7 пишется и кириллицей (Н7)
+                tol = re.search(r"(?<![a-zа-я0-9])([hн])\s*(\d{1,2})(?![\d.])", low)
+                if tol:
+                    self.attrs["tolerance"] = "H" + tol.group(2)
+            # «сверлильный самозажимной патрон»: кулачки сходятся сами, это отдельный тип
+            if re.search(r"самозажимн", low):
+                self.attrs["self_tightening"] = True
+                # «1-16мм» — диапазон зажима: у ПСС-16 верхний предел 16
+                cr = re.search(r"(?<![\d-])(\d{1,2})\s*[-–]\s*(\d{1,2})\s*(?:мм)?", low)
+                if cr:
+                    self.attrs["chuck_max_mm"] = int(cr.group(2))
             # «втулка переходная морзе2 на морзе 1» = переход 2/1: в каталоге «2/1 с лапкой … втулка»
             mr = re.search(r"морзе\s*(\d{1,2})\s*на\s*морзе\s*(\d{1,2})", low)
             if not mr:
@@ -1186,6 +1229,11 @@ class CatalogSearchEngine:
                 out.append(("толщина", False, lambda it: self._near(it["attrs"].get("thickness_mm"), a["thickness_mm"], 0.15)))
             if a.get("ld_ratio") and fam == "drill":
                 out.append(("класс длины", False, lambda it: self._int_eq(it["attrs"].get("ld_ratio"), a["ld_ratio"])))
+            if a.get("flutes2") and fam == "mill":
+                # шпоночная фреза: два зуба (2F / z2), у резьбофрез и ласточкиных хвостов их больше
+                out.append(("2 зуба", True, lambda it: bool(re.search(
+                    r"(?<![A-Z0-9])2\s*F(?![A-Z])|\bZ\s*=?\s*2(?!\d)|2\s*зуб",
+                    str(it.get("name") or "").upper()))))
             if a.get("angle_deg") and fam == "drill":
                 out.append(("угол при вершине", False, lambda it: self._near(it["attrs"].get("angle_deg"), a["angle_deg"], 1)))
             if a.get("angle_deg") and fam in ("countersink",):
@@ -1228,6 +1276,18 @@ class CatalogSearchEngine:
             if re.search(r"сверлильн", q.low):
                 out.append(("сверлильный", True, lambda it: (
                     "сверлильн" in str(it.get("name") or "").lower())))
+            if "measuring" in q.category_hints:
+                if a.get("measure_code"):
+                    out.append(("артикул", True, lambda it: (
+                        compact(a["measure_code"]) in (it.get("_name_norm") or ""))))
+                if a.get("tolerance"):
+                    # в названии бывает кириллическое «Н7», сравниваем после замены гомоглифов
+                    want_tol = a["tolerance"].upper()
+                    out.append(("допуск", True, lambda it: want_tol in re.sub(
+                        r"\s+", "", homoglyph_latin(str(it.get("name") or ""))).upper()))
+                if a.get("diameter_mm"):
+                    out.append(("диаметр", True, lambda it: self._near(
+                        gauge_diameter(it.get("name")), a["diameter_mm"], 0.05)))
             if a.get("taper"):
                 out.append(("конус", True, lambda it: accessory_mount(it.get("name")).get("taper") == a["taper"]))
             if a.get("weldon"):
@@ -1244,8 +1304,15 @@ class CatalogSearchEngine:
                 out.append(("система", False, lambda it: (
                     compact(a["chuck_system"]) in (it.get("_name_norm") or ""))))
             if a.get("chuck_taper"):
-                out.append(("конус патрона", False, lambda it: (
+                out.append(("конус патрона", True, lambda it: (
                     compact(a["chuck_taper"]) in (it.get("_name_norm") or ""))))
+            # после конуса: ослабление снимает сначала уточнения, конус сохраняется дольше
+            if a.get("self_tightening"):
+                out.append(("самозажимной", True, lambda it: (
+                    "самозажимн" in str(it.get("name") or "").lower())))
+            if a.get("chuck_max_mm"):
+                out.append(("диаметр зажима", True, lambda it: (
+                    chuck_capacity(it.get("name")) == a["chuck_max_mm"])))
             if a.get("clamp_set"):
                 out.append(("прижимы", True, lambda it: "прижим" in str(it.get("name") or "").lower()))
             if a.get("slot_mm"):

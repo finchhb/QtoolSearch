@@ -102,7 +102,7 @@ SUBSECTION_MAP = {
     "свёрла центровочные твердосплавные": ("drill", "center_drill"),
     "корончатые свёрла": ("drill", "crown_drill"),
     "головки твердосплавные для свёрл": ("drill", "drill_head"),
-    "корпус сверла под головку": ("drill", "drill_body"),
+    "корпус сверла под головку": ("drill", "indexable_drill_body"),
     "метчики метрические": ("tap", "machine_tap"),
     "метчики резьба unc/unf": ("tap", "machine_tap"),
     "метчики трубные (g)": ("tap", "pipe_tap"),
