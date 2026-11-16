@@ -95,6 +95,45 @@ _ISO_CLEARANCE = set("ABCDEFGNP")
 # Разговорные синонимы: в каталоге пишется одно, покупатель спрашивает другое.
 _WORD_ALIASES = {"барпулер": "барпуллер"}
 
+# Форма пластины словами (ISO 1832): покупатель говорит «ромб», в коде — буква C.
+PLATE_SHAPE_WORDS = [
+    (r"ромб", "C"),
+    (r"квадрат", "S"),
+    (r"треугольн", "T"),
+    (r"круг|округл|раунд", "R"),
+    (r"пятиугольн", "P"),
+    (r"шестиугольн", "H"),
+    (r"параллелограмм", "A"),
+    (r"восьмиугольн", "O"),
+]
+PLATE_SHAPE_TITLES = {
+    "C": "ромб", "S": "квадрат", "T": "треугольник", "R": "круг",
+    "P": "пятиугольник", "H": "шестиугольник", "A": "параллелограмм", "O": "восьмиугольник",
+}
+
+# Хвостовик оснастки: «BT50-SLN25-100» — конус, диаметр инструмента, длина.
+_TAPER_RE = re.compile(r"(?<![A-Z0-9])(HSK|BT|SK|NT|DIN)[\s-]?(\d{2})(?!\d)")
+
+
+def accessory_mount(name: str) -> Dict[str, Any]:
+    """Конус и размеры патрона/оправки из названия: «BT50-SLN25-100» -> taper, d, l."""
+    up = (name or "").upper()
+    m = _TAPER_RE.search(up)
+    if not m:
+        return {}
+    out: Dict[str, Any] = {"taper": m.group(1) + m.group(2)}
+    nums = re.findall(r"\d{2,3}", up[m.end():m.end() + 16])
+    if len(nums) >= 2:
+        out["d"] = int(nums[0])
+        out["l"] = int(nums[1])
+    return out
+
+
+def slot_mm_from_name(name: str) -> Optional[int]:
+    """«… паз 14мм …» -> 14: паз стола, под который берут прижимы."""
+    m = re.search(r"паз\.?\s*(\d{1,2})(?!\d)", str(name or ""), re.I)
+    return int(m.group(1)) if m else None
+
 # Порядок брендов в выдаче: сначала свои, внутри бренда — больше остатка выше.
 BRAND_PRIORITY = ("ZZKLT", "DESKAR", "OLICNC", "ZEGYO")
 _BRAND_RANK = {b.lower(): i for i, b in enumerate(BRAND_PRIORITY)}
@@ -303,6 +342,7 @@ class Query:
         self.compat_clearance: Optional[str] = None
         self.compat_hole: Optional[str] = None
         self.compat_size: Optional[str] = None
+        self.compat_hand: Optional[str] = None
         self.compat_requested = False
         self.holder_compat: Optional[Dict[str, Any]] = None
         self.holder_compat_code: Optional[str] = None
@@ -327,13 +367,22 @@ class Query:
         if under or _RE_COMPAT_PHRASE.search(self.text):
             self.compat_requested = True
         low = _apply_aliases(code_text.lower().replace("ё", "е"))
-        for fam, pattern in FAMILY_KEYWORDS:
-            if re.search(pattern, low):
-                self.family = fam
-                break
+        # «сверлильный патрон», «набор прижимов» — это само изделие оснастки:
+        # слово «сверлильный» не должно уводить запрос в группу свёрл.
+        if re.search(r"\bпатрон|\bприжим", low):
+            self.family = "accessory"
+        else:
+            for fam, pattern in FAMILY_KEYWORDS:
+                if re.search(pattern, low):
+                    self.family = fam
+                    break
         for cat, pattern in CATEGORY_HINTS.get(self.family or "", []):
             if re.search(pattern, low):
                 self.category_hints.append(cat)
+
+        # «пластина. Ромб. Размер 09. Радиус 02» — пластина описана словами, без кода
+        if self.family in ("insert", "holder"):
+            self._parse_plate_spec(low)
 
         m = re.search(r"(?<![A-Za-z0-9])SBHA\)?\s*(\d{2})(?:\s*[-–]\s*|\s+)(\d{2})(?:\s*[-–]\s*(\d{2,3}))?",
                       self.text, re.I)
@@ -379,6 +428,31 @@ class Query:
                 sq = re.search(r"(?<!\d)(\d{2})(\d{2})(?!\d)", low)
                 if sq and sq.group(1) == sq.group(2):
                     self.attrs["bar_shank_mm"] = int(sq.group(1))
+            # «патрон бт50 под велдон 25 длинной 100»: конус, хвостовик, диаметр и длина
+            tm = re.search(r"(?<![a-zа-я0-9])(hsk|bt|бт|sk|nt|din)[\s-]?(\d{2})(?!\d)", low)
+            if tm:
+                self.attrs["taper"] = {"бт": "BT", "bt": "BT", "hsk": "HSK",
+                                       "sk": "SK", "nt": "NT", "din": "DIN"}[tm.group(1)] + tm.group(2)
+            if re.search(r"велдон|weldon", low):
+                self.attrs["weldon"] = True
+                dm = re.search(r"под\s+(?:велдон|weldon)\s*(?:на\s*)?(\d{1,2})(?!\d)", low)
+                if dm:
+                    self.attrs["tool_d_mm"] = int(dm.group(1))
+            lm = re.search(r"(?:длин[а-яё]*|длиной)[\s:.—-]*(\d{2,3})(?!\d)", low)
+            if lm:
+                self.attrs["tool_l_mm"] = int(lm.group(1))
+            vm = re.search(r"(?<![a-z])vdi\s*(\d{1,2})(?!\d)", low)
+            if vm:
+                self.attrs["chuck_system"] = "VDI" + vm.group(1)
+            bm = re.search(r"(?<![a-z0-9])b\s?(\d{2})(?!\d)", low)
+            if bm and "патрон" in low:
+                self.attrs["chuck_taper"] = "B" + bm.group(1)
+            if re.search(r"\bприжим", low):
+                self.attrs["clamp_set"] = True
+                sm = (re.search(r"(?<!\d)(\d{1,2})\s*(?:мм\s*)?паз", low)
+                      or re.search(r"паз\.?\s*(\d{1,2})(?!\d)", low))
+                if sm:
+                    self.attrs["slot_mm"] = int(sm.group(1))
 
         # Обратный подбор: «пластина под державку MCLNR2525M12» — какие пластины в неё ставятся.
         # Код после слова «державка» — это код державки, а не пластины.
@@ -611,6 +685,35 @@ class Query:
             hc = compact(self.holder_compat_code)
             self.free_tokens = [t for t in self.free_tokens if compact(t) not in hc]
 
+    def _parse_plate_spec(self, low: str) -> None:
+        """«Ромб. Размер 09. Радиус 02»: пластина описана словами, без кода."""
+        for pattern, letter in PLATE_SHAPE_WORDS:
+            if re.search(pattern, low):
+                self.attrs["plate_shape"] = letter
+                break
+        m = re.search(r"размер\w*\s*[:.—-]?\s*(\d{1,2})(?!\d)", low)
+        if m:
+            self.attrs["plate_size"] = m.group(1).zfill(2)
+        r = re.search(r"радиус\w*\s*[:.—-]?\s*(\d{2}(?:[.,]\d+)?|\d+[.,]\d+|\d{1,2})(?!\d)", low)
+        if r:
+            raw = r.group(1).replace(",", ".")
+            # «02» — код радиуса пластины (0,2 мм), «0,8» и «2» — уже миллиметры
+            val = int(raw) / 10.0 if (len(raw) == 2 and raw.isdigit()) else float(raw)
+            if 0 < val <= 10:
+                self.attrs["corner_radius_mm"] = val
+        if self.family == "holder":
+            if re.search(r"\bправ", low):
+                self.attrs["hand"] = "R"
+            elif re.search(r"\bлев", low):
+                self.attrs["hand"] = "L"
+            # «под пластину Ромб. Размер 09. Правая»: код пластины не назван, но форма,
+            # размер и рука есть — по ним и подбираем совместимую державку
+            if (self.compat_requested and self.attrs.get("plate_shape")
+                    and self.attrs.get("plate_size")):
+                self.compat_shape = self.attrs["plate_shape"]
+                self.compat_size = self.attrs["plate_size"]
+                self.compat_hand = self.attrs.get("hand")
+
     def _parse_compat_insert(self) -> Optional[Tuple[int, int]]:
         """Фрагмент «под <код пластины>» -> поля совместимости; возвращает его границы."""
         for m in _RE_UNDER_INSERT.finditer(self.text):
@@ -702,6 +805,7 @@ def holder_insert_compat(code: Optional[str]) -> Optional[Dict[str, Any]]:
         "shank_mm": info.get("shank_mm"),
         "shank_diameter_mm": info.get("shank_diameter_mm"),
         "clamp": info.get("clamp"),
+        "hand": info.get("hand"),
         "kind": info.get("kind"),
         "series_key": info.get("series_key"),
         "turning": bool(info.get("turning")),
@@ -1025,6 +1129,15 @@ class CatalogSearchEngine:
                     compact(str((it["attrs"] or {}).get("iso_code") or "")) == want_iso)))
             if a.get("size_code"):
                 out.append(("размер", True, lambda it: str((it["attrs"] or {}).get("size_code") or "").zfill(2) == str(a["size_code"]).zfill(2)))
+            if a.get("plate_shape"):
+                out.append(("форма", True, lambda it: (
+                    str((it["attrs"] or {}).get("insert_shape") or "").upper() == a["plate_shape"])))
+            if a.get("plate_size"):
+                out.append(("размер", True, lambda it: (
+                    str((it["attrs"] or {}).get("size_code") or "").zfill(2) == a["plate_size"])))
+            if a.get("corner_radius_mm"):
+                out.append(("радиус", False, lambda it: self._near(
+                    it["attrs"].get("corner_radius_mm"), a["corner_radius_mm"], 0.02)))
             if a.get("diameter_mm") and not q.insert_code:
                 out.append(("диаметр", False, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.15)))
             if a.get("pitch_mm"):
@@ -1072,7 +1185,7 @@ class CatalogSearchEngine:
             if a.get("tap_kind"):
                 out.append(("исполнение", False, lambda it: (it["attrs"].get("tap_kind") or "") == a["tap_kind"]))
         elif fam == "holder":
-            if q.compat_insert:
+            if q.compat_insert or (q.compat_shape and q.compat_size):
                 out.append(("под пластину", True, lambda it: self._holder_fits(it, q)))
             if q.holder_code:
                 out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
@@ -1081,10 +1194,14 @@ class CatalogSearchEngine:
                     # «расточная державка с хвостом 25»: сравниваем диаметр круглого хвоста
                     out.append(("диаметр хвоста", True, lambda it: self._near(
                         it["attrs"].get("shank_diameter_mm"), a["shank_mm"], 0.5)))
-                else:
+                elif a.get("shank_section"):
                     out.append(("сечение", True, lambda it: (
                         not it["attrs"].get("shank_diameter_mm")
                         and self._near(it["attrs"].get("shank_mm"), a["shank_mm"], 0.5))))
+                else:
+                    # «хвост 16» без сечения: подходит и квадрат 16×16, и круглый Ø16
+                    out.append(("хвостовик", True, lambda it: self._near(
+                        it["attrs"].get("shank_mm"), a["shank_mm"], 0.5)))
         elif fam == "countersink":
             if a.get("diameter_mm"):
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.2)))
@@ -1096,6 +1213,35 @@ class CatalogSearchEngine:
             if a.get("teeth"):
                 out.append(("зубья", False, lambda it: self._int_eq(it["attrs"].get("teeth"), a["teeth"])))
         elif fam == "accessory":
+            if "патрон" in q.low:
+                # «патрон» и «оправка» — само изделие: винты и гайки в ответ не идут
+                out.append(("изделие", True, lambda it: (
+                    "патрон" in str(it.get("name") or "").lower()
+                    or "оправк" in str(it.get("name") or "").lower())))
+            if re.search(r"сверлильн", q.low):
+                out.append(("сверлильный", True, lambda it: (
+                    "сверлильн" in str(it.get("name") or "").lower())))
+            if a.get("taper"):
+                out.append(("конус", True, lambda it: accessory_mount(it.get("name")).get("taper") == a["taper"]))
+            if a.get("weldon"):
+                out.append(("хвостовик Weldon", True, lambda it: bool(
+                    re.search(r"WELDON|SLN", str(it.get("name") or "").upper()))))
+            if a.get("tool_d_mm"):
+                out.append(("диаметр хвоста", True, lambda it: self._near(
+                    accessory_mount(it.get("name")).get("d"), a["tool_d_mm"], 0.01)))
+            if a.get("tool_l_mm"):
+                out.append(("длина", True, lambda it: self._near(
+                    accessory_mount(it.get("name")).get("l"), a["tool_l_mm"], 0.01)))
+            if a.get("chuck_system"):
+                out.append(("система", False, lambda it: (
+                    compact(a["chuck_system"]) in (it.get("_name_norm") or ""))))
+            if a.get("chuck_taper"):
+                out.append(("конус патрона", False, lambda it: (
+                    compact(a["chuck_taper"]) in (it.get("_name_norm") or ""))))
+            if a.get("clamp_set"):
+                out.append(("прижимы", True, lambda it: "прижим" in str(it.get("name") or "").lower()))
+            if a.get("slot_mm"):
+                out.append(("паз", True, lambda it: slot_mm_from_name(it.get("name")) == a["slot_mm"]))
             if a.get("collet_series"):
                 out.append(("серия", True, lambda it: (it["attrs"].get("collet_series") or "").upper() == a["collet_series"].upper()))
             if a.get("jaw_series"):
@@ -1153,6 +1299,8 @@ class CatalogSearchEngine:
         if q.compat_clearance and info.get("clearance") != q.compat_clearance:
             return False
         if q.compat_size and info.get("size") != q.compat_size:
+            return False
+        if q.compat_hand and info.get("hand") and info.get("hand") != q.compat_hand:
             return False
         if not clamp_accepts_hole(info.get("clamp"), q.compat_hole):
             return False
@@ -1239,7 +1387,9 @@ class CatalogSearchEngine:
                 return self._search_compat(q, limit, in_stock_only)
             return self._search_ambiguous(q, limit, in_stock_only)
         if q.compat_requested and not q.compat_insert:
-            return self._compat_ask_code(q)
+            # «под пластину Ромб 09»: форма и размер названы — код пластины не нужен
+            if not (q.family == "holder" and q.compat_shape and q.compat_size):
+                return self._compat_ask_code(q)
         if q.holder_compat_requested and not q.holder_compat:
             return self._holder_ask_code(q)
         return self._search_family(q, q.family, limit, in_stock_only)
@@ -1535,6 +1685,12 @@ class CatalogSearchEngine:
             chips.append(f"под пластину: {q.compat_insert}")
         if q.holder_compat and fam == "insert":
             chips.append(f"под державку: {q.holder_compat_code}")
+        if a.get("plate_shape"):
+            chips.append("форма: " + PLATE_SHAPE_TITLES.get(a["plate_shape"], a["plate_shape"]))
+        if a.get("plate_size"):
+            chips.append(f"размер: {a['plate_size']}")
+        if a.get("hand") and fam == "holder":
+            chips.append("державка: правая" if a["hand"] == "R" else "державка: левая")
         if a.get("diameter_mm") and (not q.thread or a.get("tap_drill_for")):
             chips.append(f"диаметр: {fmt_num(a['diameter_mm'])} мм")
         if q.thread:
@@ -1588,12 +1744,28 @@ class CatalogSearchEngine:
             chips.append(f"стандарт: {a['standard']}")
         if a.get("radius_mm"):
             chips.append(f"радиус: {fmt_num(a['radius_mm'])} мм")
+        if a.get("corner_radius_mm"):
+            chips.append(f"радиус: {fmt_num(a['corner_radius_mm'])} мм")
+        if a.get("taper"):
+            chips.append(f"конус: {a['taper']}")
+        if a.get("weldon"):
+            chips.append("хвостовик: Weldon")
+        if a.get("tool_d_mm"):
+            chips.append(f"диаметр хвоста: {fmt_num(a['tool_d_mm'])} мм")
+        if a.get("tool_l_mm"):
+            chips.append(f"длина: {fmt_num(a['tool_l_mm'])} мм")
+        if a.get("chuck_system"):
+            chips.append(f"система: {a['chuck_system']}")
+        if a.get("chuck_taper"):
+            chips.append(f"конус патрона: {a['chuck_taper']}")
+        if a.get("slot_mm"):
+            chips.append(f"паз: {a['slot_mm']} мм")
         return chips
 
     def _follow_ups(self, q: Query, fam: str, products: List[Dict[str, Any]]) -> List[str]:
         a = q.attrs
         tips = []
-        if q.compat_requested and not q.compat_insert:
+        if q.compat_requested and not q.compat_insert and not (a.get("plate_shape") and a.get("plate_size")):
             tips.append("Укажите код пластины, под которую нужен инструмент (например CNMG 120408 или APMT1604).")
         if fam == "drill":
             if not a.get("diameter_mm"):
@@ -1615,7 +1787,7 @@ class CatalogSearchEngine:
                 else:
                     tips.append("Укажите сечение державки (16х16, 20х20, 25х25) или её код.")
         elif fam == "insert":
-            if not q.insert_code and not q.holder_compat:
+            if not q.insert_code and not q.holder_compat and not (a.get("plate_shape") or a.get("plate_size")):
                 tips.append("Укажите код пластины (например CNMG 120408) или форму и размер.")
         elif fam == "accessory":
             if "tool_holder" in q.category_hints and not a.get("clamp_mm"):

@@ -118,6 +118,49 @@ ITEMS = [
     item("accessory", "accessory", "S16 2-50 мм барпуллер квадр.хв. OLICNC", sku="67376", stock=4),
     item("accessory", "accessory", "S20 2-50 мм барпуллер квадр.хв. OLICNC", sku="67377", stock=4),
     item("accessory", "accessory", "S25 2-50 мм барпуллер квадр.хв. OLICNC", sku="67378", stock=4),
+    # «пластина. Ромб. Размер 09. Радиус 02»: форма, размер и радиус словами
+    item("insert", "turning_insert", "CCGT 09T302 AL K10 для точения пластина DESKAR",
+         sku="CCGT09T302", brand="DESKAR", stock=1105, iso_code="CCGT09T302",
+         insert_shape="C", clearance_angle="C", size_code=9, corner_radius_mm=0.2, grade="K10"),
+    item("insert", "turning_insert", "CCMT 09T302 VM LF6018 для точения пластина DESKAR",
+         sku="CCMT09T302", brand="DESKAR", stock=520, iso_code="CCMT09T302",
+         insert_shape="C", clearance_angle="C", size_code=9, corner_radius_mm=0.2, grade="LF6018"),
+    item("insert", "turning_insert", "CCGT 09T304 FN LF6018 для точения пластина DESKAR",
+         sku="CCGT09T304", brand="DESKAR", stock=50, iso_code="CCGT09T304",
+         insert_shape="C", clearance_angle="C", size_code=9, corner_radius_mm=0.4, grade="LF6018"),
+    item("insert", "turning_insert", "CCGT 11T302 AL K10 для точения пластина DESKAR",
+         sku="CCGT11T302", brand="DESKAR", stock=90, iso_code="CCGT11T302",
+         insert_shape="C", clearance_angle="C", size_code=11, corner_radius_mm=0.2, grade="K10"),
+    # державки под пластину C 09: правая 16×16 и расточная с хвостом Ø16
+    item("holder", "holder_external", "SCLCR1616H09 для наружного точения державка DESKAR",
+         sku="SCLCR1616H09", brand="DESKAR", stock=54, holder_code="SCLCR1616H09"),
+    item("holder", "holder_external", "SCLCL1616H09 для наружного точения державка DESKAR",
+         sku="SCLCL1616H09", brand="DESKAR", stock=7, holder_code="SCLCL1616H09"),
+    item("holder", "holder_internal", "S16Q-SCLCR09 для внутреннего точения державка DESKAR",
+         sku="S16Q-SCLCR09", brand="DESKAR", stock=203, holder_code="S16Q-SCLCR09"),
+    # «патрон бт50 под велдон 25 длинной 100»
+    item("accessory", "accessory", "BT50-SLN25-100 патрон weldon OLICNC", sku="123046",
+         brand="OLICNC", stock=5),
+    item("accessory", "accessory", "BT50-SLN25-100 оправка для корпусных сверл (z) Qtool",
+         sku="83824", brand="Qtool", stock=4),
+    item("accessory", "accessory", "BT50-SLN32-100 патрон weldon OLICNC", sku="123047",
+         brand="OLICNC", stock=9),
+    item("accessory", "accessory", "BT40-SLN25-100 патрон weldon OLICNC", sku="123056",
+         brand="OLICNC", stock=6),
+    # сверлильные патроны: в каталоге только оправки под них с конусами B16/B18
+    item("accessory", "chuck", "KM4 B16 оправка для сверлильного патрона ГОСТ 2682-86 (z) Qtool",
+         sku="83850", brand="Qtool", stock=350),
+    item("accessory", "chuck", "KM3 B18 оправка для сверлильного патрона ГОСТ 2682-86 (z) Qtool",
+         sku="83847", brand="Qtool", stock=500),
+    # «набор прижимов под 14 паз»
+    item("accessory", "accessory", "М12х1.75 (13.7) паз 14мМнабор клин. ступ. каленых прижимов 58шт. (z) Qtool",
+         sku="83586", brand="Qtool", stock=177),
+    item("accessory", "accessory",
+         "Набор прижимов со шпильк. M12 для фрез. стола с паз. 14мм 58 шт кейс OLICNC",
+         sku="67367", brand="OLICNC", stock=3),
+    item("accessory", "accessory",
+         "Набор прижим. со шпильк. M14 для фрез. стола паз. 16 мм 58 шт OLICNC",
+         sku="67360", brand="OLICNC", stock=12),
 ]
 
 
@@ -754,6 +797,112 @@ class R1SearchTest(unittest.TestCase):
         self.assertIn("SCLCR2525M12", fits)
         no_fit = {p["sku"] for p in self.engine.search("державка под CCMG1204")["products"]}
         self.assertNotIn("SCLCR2525M12", no_fit)
+
+
+class PlateSpecTest(unittest.TestCase):
+    """«пластина. Ромб. Размер 09. Радиус 02»: пластина описана словами, без кода."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_shape_size_radius_are_parsed(self):
+        q = Query("пластина. Ромб. Размер 09.радиус 02")
+        self.assertEqual(q.family, "insert")
+        self.assertEqual(q.attrs.get("plate_shape"), "C")
+        self.assertEqual(q.attrs.get("plate_size"), "09")
+        self.assertEqual(q.attrs.get("corner_radius_mm"), 0.2)
+
+    def test_search_returns_that_shape_size_and_radius(self):
+        res = self.engine.search("пластина. Ромб. Размер 09.радиус 02")
+        skus = {p["sku"] for p in res["products"]}
+        self.assertIn("CCGT09T302", skus)
+        self.assertIn("CCMT09T302", skus)
+        self.assertNotIn("CCGT09T304", skus)   # радиус 0,4
+        self.assertNotIn("CCGT11T302", skus)   # размер 11
+        self.assertEqual(res["level"], "точное")
+
+    def test_chips_spell_out_the_spec(self):
+        chips = self.engine.search("пластина. Ромб. Размер 09.радиус 02")["chips"]
+        self.assertIn("форма: ромб", chips)
+        self.assertIn("размер: 09", chips)
+        self.assertIn("радиус: 0,2 мм", chips)
+
+
+class HolderFromPlateSpecTest(unittest.TestCase):
+    """«державка 1616 под пластина Правая. Ромб. Размер 09»: код пластины не назван."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_shape_and_size_become_compat_request(self):
+        q = Query("державка 1616 под пластина Правая. Ромб. Размер 09")
+        self.assertTrue(q.compat_requested)
+        self.assertEqual((q.compat_shape, q.compat_size, q.compat_hand), ("C", "09", "R"))
+
+    def test_right_hand_square_section(self):
+        res = self.engine.search("державка 1616 под пластина Правая. Ромб. Размер 09")
+        self.assertEqual([p["sku"] for p in res["products"]], ["SCLCR1616H09"])
+        self.assertEqual(res["level"], "точное")
+
+    def test_left_hand_square_section(self):
+        res = self.engine.search("державка 1616 под пластина Левая. Ромб. Размер 09")
+        self.assertEqual([p["sku"] for p in res["products"]], ["SCLCL1616H09"])
+
+    def test_bare_shank_matches_square_and_round(self):
+        res = self.engine.search("державка хвост 16 под пластина Правая. Ромб. Размер 09")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"S16Q-SCLCR09", "SCLCR1616H09"})
+        self.assertIn("хвостовик: 16 мм", res["chips"])
+
+
+class ChuckAccessoryTest(unittest.TestCase):
+    """Патроны и оправки — изделия оснастки, а не свёрла."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_patron_and_prizhim_are_accessories(self):
+        for text in ("сверлильный самозажимной патрон 1-16мм",
+                     "набор прижимов под 14 паз",
+                     "vdi 30 сверлильный патрон"):
+            self.assertEqual(Query(text).family, "accessory", text)
+
+    def test_taper_weldon_diameter_length(self):
+        q = Query("патрон бт50 под велдон 25 длинной 100")
+        self.assertEqual(q.attrs.get("taper"), "BT50")
+        self.assertTrue(q.attrs.get("weldon"))
+        self.assertEqual(q.attrs.get("tool_d_mm"), 25)
+        self.assertEqual(q.attrs.get("tool_l_mm"), 100)
+        res = self.engine.search("патрон бт50 под велдон 25 длинной 100")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"123046", "83824"})
+
+    def test_chuck_taper_selects_arbor(self):
+        res = self.engine.search("сверлильный самозажимной патрон 1-16мм. B16")
+        self.assertEqual([p["sku"] for p in res["products"]], ["83850"])
+        self.assertIn("конус патрона: B16", res["chips"])
+
+    def test_vdi_system_is_parsed(self):
+        self.assertEqual(Query("vdi 30 сверлильный патрон").attrs.get("chuck_system"), "VDI30")
+
+
+class ClampSetSlotTest(unittest.TestCase):
+    """«набор прижимов под 14 паз»: паз стола берётся из названия позиции."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_slot_is_parsed(self):
+        q = Query("набор прижимов под 14 паз")
+        self.assertTrue(q.attrs.get("clamp_set"))
+        self.assertEqual(q.attrs.get("slot_mm"), 14)
+
+    def test_search_returns_only_that_slot(self):
+        res = self.engine.search("набор прижимов под 14 паз")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"83586", "67367"})
+        self.assertIn("паз: 14 мм", res["chips"])
 
 
 class SiteOnlyEngine(ToolAdvisorEngine):

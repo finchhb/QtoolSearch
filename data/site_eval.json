@@ -165,6 +165,46 @@
     "must_include": "CCMT 120408"
   },
   {
+    "query": "пластина. Ромб. Размер 09.радиус 02",
+    "family": "insert",
+    "level": "точное",
+    "attrs": {"plate_shape": "C", "plate_size": "09", "corner_radius_mm": 0.2},
+    "chips_include": ["форма: ромб", "размер: 09", "радиус: 0,2 мм"],
+    "total_min": 1,
+    "must_include": "CCGT 09T302",
+    "top": 3
+  },
+  {
+    "query": "державка 1616 под пластина Правая. Ромб. Размер 09",
+    "family": "holder",
+    "level": "точное",
+    "attrs": {"plate_shape": "C", "plate_size": "09"},
+    "chips_include": ["державка: правая", "сечение: 16×16 мм"],
+    "must_include": "SCLCR1616H09"
+  },
+  {
+    "query": "державка хвост 16 под пластина Правая. Ромб. Размер 09",
+    "family": "holder",
+    "level": "точное",
+    "must_include": "S16Q-SCLCR09"
+  },
+  {
+    "query": "патрон бт50 под велдон 25 длинной 100",
+    "family": "accessory",
+    "level": "точное",
+    "attrs": {"taper": "BT50", "tool_d_mm": 25, "tool_l_mm": 100},
+    "chips_include": ["конус: BT50", "хвостовик: Weldon", "диаметр хвоста: 25 мм", "длина: 100 мм"],
+    "must_include": "BT50-SLN25-100"
+  },
+  {
+    "query": "набор прижимов под 14 паз",
+    "family": "accessory",
+    "level": "точное",
+    "attrs": {"slot_mm": 14},
+    "chips_include": ["паз: 14 мм"],
+    "must_include": "паз. 14мм"
+  },
+  {
     "query": "8,5",
     "total_max": 0
   },
