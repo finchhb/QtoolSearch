@@ -95,6 +95,10 @@ _ISO_CLEARANCE = set("ABCDEFGNP")
 # Разговорные синонимы: в каталоге пишется одно, покупатель спрашивает другое.
 _WORD_ALIASES = {"барпулер": "барпуллер"}
 
+# Порядок брендов в выдаче: сначала свои, внутри бренда — больше остатка выше.
+BRAND_PRIORITY = ("ZZKLT", "DESKAR", "OLICNC", "ZEGYO")
+_BRAND_RANK = {b.lower(): i for i, b in enumerate(BRAND_PRIORITY)}
+
 
 def _apply_aliases(text: str) -> str:
     out = text or ""
@@ -1462,6 +1466,9 @@ class CatalogSearchEngine:
                 continue
             seen.add(key)
             uniq.append((it, score))
+        # порядок в ответе: бренд по приоритету, внутри бренда — по остатку на складе
+        uniq.sort(key=lambda x: (_BRAND_RANK.get(x[0].get("_brand_norm") or "", len(_BRAND_RANK)),
+                                 -(x[0].get("stock") or 0), -x[1]))
         return uniq
 
     def _nearest_diameter(self, pool, want: float, fam: str, q: Query, limit: int, guard=None):

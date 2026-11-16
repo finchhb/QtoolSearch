@@ -99,7 +99,8 @@
     "query": "державка под CNMG1204",
     "family": "holder",
     "compatible_insert": "CNMG1204",
-    "must_include": "MCLNL1616H12"
+    "must_include": "MCLNL1616H12",
+    "top": 40
   },
   {
     "query": "фреза 120 под APMT",
@@ -153,7 +154,8 @@
     "level": "точное",
     "fits_holder": "MCLNR2525M12",
     "total_min": 1,
-    "must_include": "CNMG 120408"
+    "must_include": "CNMG 120408",
+    "top": 10
   },
   {
     "query": "пластина для державки SCLCR2525M12",

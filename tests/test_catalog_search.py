@@ -16,9 +16,9 @@ from src.clarification_advisor import ClarificationAdvisor
 from src.engine import ToolAdvisorEngine
 
 
-def item(family, category, name, sku=None, stock=10, price=1000.0, **attrs):
+def item(family, category, name, sku=None, stock=10, price=1000.0, brand="TestBrand", **attrs):
     base = {
-        "id": sku or name, "sku": sku or name, "name": name, "brand": "TestBrand",
+        "id": sku or name, "sku": sku or name, "name": name, "brand": brand,
         "family": family, "category": category, "section": "", "subsection": "",
         "stock": stock, "price": price, "currency": "RUB", "price_on_request": False,
         "active": True, "url": "https://qtool.ru/item/" + (sku or name), "attrs": attrs,
@@ -662,6 +662,30 @@ class BarPullerTest(unittest.TestCase):
     def test_plain_barpuller_search_returns_whole_group(self):
         res = self.engine.search("барпулер")
         self.assertEqual({p["sku"] for p in res["products"]}, {"67372", "67376", "67377", "67378"})
+
+
+class ResultOrderTest(unittest.TestCase):
+    """Порядок в ответе: бренд по приоритету ZZKLT, DESKAR, OLICNC, ZEGYO, внутри — остаток."""
+
+    ITEMS = [
+        item("drill", "solid_carbide_drill", "Сверло твердосплавное 8,5 ZZKLT-5",
+             sku="ORD-Z1", stock=5, brand="ZZKLT", diameter_mm=8.5),
+        item("drill", "solid_carbide_drill", "Сверло твердосплавное 8,5 ZZKLT-20",
+             sku="ORD-Z2", stock=20, brand="ZZKLT", diameter_mm=8.5),
+        item("drill", "solid_carbide_drill", "Сверло твердосплавное 8,5 DESKAR",
+             sku="ORD-D", stock=50, brand="DESKAR", diameter_mm=8.5),
+        item("drill", "solid_carbide_drill", "Сверло твердосплавное 8,5 OLICNC",
+             sku="ORD-O", stock=40, brand="OLICNC", diameter_mm=8.5),
+        item("drill", "solid_carbide_drill", "Сверло твердосплавное 8,5 ZEGYO",
+             sku="ORD-G", stock=30, brand="ZEGYO", diameter_mm=8.5),
+        item("drill", "solid_carbide_drill", "Сверло твердосплавное 8,5 Qtool",
+             sku="ORD-Q", stock=100, brand="Qtool", diameter_mm=8.5),
+    ]
+
+    def test_brand_then_stock(self):
+        res = CatalogSearchEngine(self.ITEMS).search("сверло 8,5 мм", limit=10)
+        self.assertEqual([p["sku"] for p in res["products"]],
+                         ["ORD-Z2", "ORD-Z1", "ORD-D", "ORD-O", "ORD-G", "ORD-Q"])
 
 
 class ClampHoleTest(unittest.TestCase):

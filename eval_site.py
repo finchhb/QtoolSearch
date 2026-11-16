@@ -53,10 +53,11 @@ def _check(res, exp) -> list:
                 errors.append(f"tap_drill.{key}: ждали {want}, получили {got.get(key)}")
     want_sub = exp.get("must_include")
     if want_sub:
-        top = (res.get("products") or [])[: int(exp.get("top", 5))]
+        n = int(exp.get("top", 5))
+        top = (res.get("products") or [])[:n]
         blob = " ".join(f"{p.get('sku', '')} {p.get('name', '')}" for p in top).casefold()
         if want_sub.casefold() not in blob:
-            errors.append(f"в топе нет «{want_sub}»")
+            errors.append(f"в первых {n} нет «{want_sub}»")
     return errors
 
 
@@ -79,7 +80,8 @@ def main(argv=None) -> int:
     passed = 0
     for case in cases:
         query = case["query"]
-        res = engine.search(query, limit=args.limit, in_stock_only=case.get("in_stock_only", True))
+        limit = max(args.limit, int(case.get("top", 5)))
+        res = engine.search(query, limit=limit, in_stock_only=case.get("in_stock_only", True))
         errors = _check(res, case)
         if errors:
             print(f"FAIL  {query}")
