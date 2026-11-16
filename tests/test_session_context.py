@@ -65,6 +65,14 @@ class EffectiveQueryTest(unittest.TestCase):
         self.assertEqual(app.effective_query(self.sid, "под хвостовик 20"),
                          "расточная s20 под dcmt. под хвостовик 20")
 
+    def test_bare_short_insert_code_does_not_inherit_previous_query(self):
+        # «DCGT 11» после «держатель расточного инструмента под 20 хвостовик»
+        # повторял ту же выдачу держателей вместо пластин DCGT 11
+        app.SESSIONS.put(self.sid, last_q="держатель расточного инструмента под 20 хвостовик",
+                         decision="site_search")
+        for q in ("DCGT 11", "cnmg12", "dcgt09"):
+            self.assertEqual(app.effective_query(self.sid, q), q)
+
 
 if __name__ == "__main__":
     unittest.main()

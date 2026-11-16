@@ -89,6 +89,18 @@ _HOLDER_PREFIXES = {
     "PSSN", "MSSN", "SCLC", "SDJC", "STGC", "SVJB", "SVJC", "SDUC",
 }
 _INSERT_SHAPES = set("ABCDEHKLMOPRSTVW")
+# задний угол — вторая буква кода пластины (CNMG, DCGT); отсекает «SK40», «BT40», «HSK63»
+_ISO_CLEARANCE = set("ABCDEFGNP")
+
+# Разговорные синонимы: в каталоге пишется одно, покупатель спрашивает другое.
+_WORD_ALIASES = {"барпулер": "барпуллер"}
+
+
+def _apply_aliases(text: str) -> str:
+    out = text or ""
+    for src, dst in _WORD_ALIASES.items():
+        out = re.sub(rf"(?<![a-zа-яё]){src}", dst, out, flags=re.I)
+    return out
 
 # частые префиксы пластин: нужны, чтобы понимать «под APMT» без размера
 _COMMON_INSERT_PREFIXES = {
@@ -136,6 +148,8 @@ def insert_code_from_text(text: str) -> Optional[str]:
             digits = ""
             j = i + 1
             while j < len(toks) and re.fullmatch(r"\d{1,6}", toks[j]) and len(digits) < 6:
+                if len(digits) + len(toks[j]) > 6:
+                    break  # «CNMG 1204 4325»: 4325 — марка, а не продолжение кода
                 digits += toks[j]
                 j += 1
             if 4 <= len(digits) <= 6:
@@ -212,7 +226,7 @@ FAMILY_KEYWORDS = [
     ("reamer", r"разверт"),
     ("countersink", r"зенков|зенкер|фаскосним|гратосним"),
     ("holder", r"державк|борштанг|holder|резец|резц|минирез|оправк|расточн"),
-    ("accessory", r"цанг|патрон|винт|гайк|ключ|сож|тиск|кулачк|адаптер|переходник|втулк|держател"),
+    ("accessory", r"цанг|патрон|винт|гайк|ключ|сож|тиск|кулачк|адаптер|переходник|втулк|держател|барпул"),
     ("measuring", r"штанген|микрометр|нутромер|линейк|угломер|индикатор|рулетк"),
     ("saw", r"пил[аы]|пильн|дисков.*пил"),
 ]
@@ -267,7 +281,7 @@ CATEGORY_TITLES = {
 class Query:
     def __init__(self, text: str, insert_prefixes: Optional[set] = None):
         self.text = (text or "").strip()
-        self.low = self.text.lower().replace("ё", "е")
+        self.low = _apply_aliases(self.text.lower().replace("ё", "е"))
         self.variants = query_variants(self.text)
         self.compact = compact(self.text)
         self.family: Optional[str] = None
@@ -308,7 +322,7 @@ class Query:
             code_text = _RE_COMPAT_PHRASE.sub(" ", code_text).strip()
         if under or _RE_COMPAT_PHRASE.search(self.text):
             self.compat_requested = True
-        low = code_text.lower().replace("ё", "е")
+        low = _apply_aliases(code_text.lower().replace("ё", "е"))
         for fam, pattern in FAMILY_KEYWORDS:
             if re.search(pattern, low):
                 self.family = fam
@@ -337,6 +351,31 @@ class Query:
             if one:
                 self.attrs["shank_mm"] = float(one.group(1))
 
+        # «кулачки к11-400»: серия патрона и его размер; в каталоге «К11-400 кулачки …»
+        if self.family == "accessory" and "machine_jaw" in self.category_hints:
+            jm = re.search(r"(?<![A-Za-zА-Яа-яЁё0-9])([A-Za-zА-Яа-яЁё])(\d{2})\s*[-–]\s*(\d{2,3})(?!\d)",
+                           low)
+            if jm:
+                self.attrs["jaw_series"] = homoglyph_latin(jm.group(1)).upper() + jm.group(2)
+                self.attrs["jaw_size"] = int(jm.group(3))
+
+        if self.family == "accessory":
+            # «втулка переходная морзе2 на морзе 1» = переход 2/1: в каталоге «2/1 с лапкой … втулка»
+            mr = re.search(r"морзе\s*(\d{1,2})\s*на\s*морзе\s*(\d{1,2})", low)
+            if not mr:
+                mr = re.search(r"(?<![\d/])(\d{1,2})\s*/\s*(\d{1,2})(?![\d/])", low)
+            if mr and "втулк" in low:
+                self.attrs["morse_from"] = int(mr.group(1))
+                self.attrs["morse_to"] = int(mr.group(2))
+                if re.search(r"\bс\s+лапк", low):
+                    self.attrs["with_tang"] = True
+            if "барпуллер" in low:
+                self.attrs["bar_puller"] = True
+                # «барпулер 2525»: 25×25 — квадратный хвост, в каталоге «S25 … квадр.хв.»
+                sq = re.search(r"(?<!\d)(\d{2})(\d{2})(?!\d)", low)
+                if sq and sq.group(1) == sq.group(2):
+                    self.attrs["bar_shank_mm"] = int(sq.group(1))
+
         # Обратный подбор: «пластина под державку MCLNR2525M12» — какие пластины в неё ставятся.
         # Код после слова «державка» — это код державки, а не пластины.
         rev_holder = None
@@ -360,6 +399,28 @@ class Query:
                     self.insert_code = code
                     self.family = "insert"
                     break
+        if not self.insert_code and self.family in (None, "insert"):
+            # «DCGT 11», «DCGT09», «DCGT 11T302»: префикс и двузначный размер без полного хвоста —
+            # обычная короткая запись пластины. Вторая буква — задний угол, поэтому «SK40» и
+            # «HSK63» сюда не попадают.
+            for v in (query_variants(code_text) if under else self.variants):
+                m = re.search(r"(?<![A-Za-z0-9])([A-Z]{2,5})\s?(\d{2})([A-Z]\d{2,4})?(?![A-Za-z0-9])",
+                              v.upper())
+                if not m:
+                    continue
+                pref = m.group(1)
+                if (pref[0] not in _INSERT_SHAPES or pref[1] not in _ISO_CLEARANCE
+                        or pref in _HOLDER_PREFIXES or parse_holder_code(pref + m.group(2))):
+                    continue
+                if pref not in _COMMON_INSERT_PREFIXES and pref not in self._insert_prefixes:
+                    continue
+                self.insert_code = pref + m.group(2)
+                self.attrs["insert_prefix"] = pref
+                self.attrs["size_code"] = m.group(2)
+                if m.group(3):
+                    self.attrs["iso_tail"] = m.group(3)
+                self.family = "insert"
+                break
         if self.family in (None, "holder"):
             # без варианта «неверная раскладка»: русские слова превращаются в латинский
             # набор, который иначе склеивается с сечением в ложный код державки
@@ -377,9 +438,18 @@ class Query:
 
         if self.family == "insert":
             up = self.text.upper().replace("Ё", "Е")
-            g = re.search(r"(?<![\w.])(\d{4}|[A-Z]{1,3}\d{3,4})(?![\w.])", up)
-            if g and not (self.insert_code and g.group(1) in self.insert_code) and not self.holder_compat_requested:
-                self.attrs["grade"] = g.group(1)
+            for g in re.finditer(r"(?<![\w.])(\d{4}|[A-Z]{1,3}\d{3,4})(?![\w.])", up):
+                # «CNMG 1204 4325»: 1204 — часть кода пластины, марка — следующее число
+                if self.insert_code and g.group(1) in self.insert_code:
+                    continue
+                if not self.holder_compat_requested:
+                    self.attrs["grade"] = g.group(1)
+                break
+            if "grade" not in self.attrs and self.insert_code:
+                # «DCGT 11T302 FL K10»: короткая марка вида K10
+                g2 = re.search(r"(?<![\w.])([A-Z]{1,2}\d{2})(?![\w.])", up)
+                if g2 and g2.group(1) not in self.insert_code:
+                    self.attrs["grade"] = g2.group(1)
             iso_g = re.search(r"(?<![\w.])([PMKNSH])\s?(\d{1,2})(?![\w.])", up)
             if iso_g:
                 self.attrs["iso_group"] = iso_g.group(1)
@@ -529,7 +599,8 @@ class Query:
             "надо", "хочу", "сверло", "сверла", "фреза", "фрезы", "метчик", "метчика", "державка",
             "державки", "мм", "шт", "цена", "стоимость", "сколько", "стоит", "с", "и", "или",
         }
-        self.free_tokens = [t for t in tokenize(self.text) if t not in stop and len(t) > 1 and not re.fullmatch(r"\d+[.,]?\d*", t)]
+        self.free_tokens = [t for t in tokenize(_apply_aliases(self.text))
+                            if t not in stop and len(t) > 1 and not re.fullmatch(r"\d+[.,]?\d*", t)]
         if self.compat_insert:
             self.free_tokens = [t for t in self.free_tokens if t != self.compat_insert.lower()]
         if self.holder_compat_code:
@@ -686,10 +757,10 @@ _RE_TOKEN = re.compile(r"[a-zа-яё0-9]+(?:[.,][0-9]+)*(?:[xх][0-9]+(?:[.,][0-
 def is_clarification(text: str, insert_prefixes: Optional[Iterable[str]] = None) -> bool:
     """Уточнение к предыдущему запросу: «12», «под CNMG12», «чистовая», «под хвостовик 20».
 
-    Уточнения — замкнутый набор: число, слово-уточнитель, известный код пластины.
-    Всё незнакомое («MTA2 велдон 10», «SK40», «HSK63», «ER32») — новый запрос, даже если
-    короткое: иначе сообщение со своим обозначением склеивалось с предыдущей выдачей
-    и повторяло её.
+    Уточнения — замкнутый набор: число, слово-уточнитель, префикс пластины без размера.
+    Всё незнакомое («MTA2 велдон 10», «SK40», «HSK63», «ER32») и код с размером
+    («cnmg12», «DCGT 11») — новый запрос, даже если короткое: иначе сообщение со своим
+    обозначением склеивалось с предыдущей выдачей и повторяло её.
     """
     low = (text or "").lower().replace("ё", "е").strip()
     if not low:
@@ -706,13 +777,21 @@ def is_clarification(text: str, insert_prefixes: Optional[Iterable[str]] = None)
         return False  # полный код пластины («CNMG 120408») — самостоятельный запрос
     if holder_code_from_text(rest):
         return False  # структурно полный код оснастки («PCLNR 2525M12», «MCBNR2020»)
+    # «DCGT 11», «CNMG 12»: код пластины с размером через пробел — самостоятельный запрос
+    short = re.search(r"(?<![a-z0-9])([a-z]{2,5})\s?(\d{2})(?![a-z0-9])", rest)
+    if short:
+        pref = insert_prefix_from_word(short.group(1), known)
+        if pref in known and pref[1] in _ISO_CLEARANCE:
+            return False
     for tok in _RE_TOKEN.findall(rest):
         if _RE_NUMBER.fullmatch(tok) or _RE_THREAD_SIZE.fullmatch(tok) or _RE_CLARIFY_WORD.fullmatch(tok):
             continue
-        # короткий известный префикс пластины: «cnmg12», «cnmg» — уточнение,
-        # полный размер в префиксном разборе уже отсечён выше
+        # голый префикс без размера («cnmg», «dcmt») — уточнение к предыдущему запросу;
+        # код с размером («cnmg12», «DCGT 11») — самостоятельный запрос, иначе он
+        # склеивался с предыдущей выдачей и повторял её
         head = re.fullmatch(r"([a-zа-яё]{2,6})(\d*)", tok)
-        if head and insert_prefix_from_word(head.group(1), known) in known and len(head.group(2)) < 4:
+        if (head and not head.group(2)
+                and insert_prefix_from_word(head.group(1), known) in known):
             continue
         return False
     return True
@@ -812,6 +891,8 @@ class CatalogSearchEngine:
             toks = set(tokenize(text))
             it["_tokens"] = toks
             it["_compact"] = compact(f"{it.get('sku')} {it.get('name')}")
+            # имена с кириллическими омоглифами («К11-400») сравниваем в латинице
+            it["_name_norm"] = compact(homoglyph_latin(str(it.get("name") or "")))
             code_src = " ".join(str(x) for x in (it.get("sku"), attrs.get("iso_code"), attrs.get("holder_code")) if x)
             it["_code_compact"] = compact(code_src)
             it["_brand_norm"] = compact(it.get("brand", ""))
@@ -927,9 +1008,17 @@ class CatalogSearchEngine:
         out = []
         if fam == "insert":
             if q.insert_code:
-                out.append(("код", True, lambda it: self._code_match(it, q.insert_code)[0] > 0))
+                # короткая запись «DCGT09»: сверяем префикс, размер отсекается отдельно,
+                # иначе при отсутствии размера фильтр кода убивает всю выдачу
+                want_code = a.get("insert_prefix") or q.insert_code
+                out.append(("код", True, lambda it: self._code_match(it, want_code)[0] > 0))
             if q.holder_compat:
                 out.append(("под державку", True, lambda it: self._insert_fits_holder(it, q)))
+            if a.get("iso_tail"):
+                # «DCGT 11T302» — точное обозначение пластины: 11T302, а не любой размер 11
+                want_iso = compact(q.insert_code + a["iso_tail"])
+                out.append(("полный код", True, lambda it: (
+                    compact(str((it["attrs"] or {}).get("iso_code") or "")) == want_iso)))
             if a.get("size_code"):
                 out.append(("размер", True, lambda it: str((it["attrs"] or {}).get("size_code") or "").zfill(2) == str(a["size_code"]).zfill(2)))
             if a.get("diameter_mm") and not q.insert_code:
@@ -947,9 +1036,11 @@ class CatalogSearchEngine:
                 out.append(("вид обработки", False, lambda it: (it["attrs"].get("operation") or "") == a["operation"]))
             if a.get("grade"):
                 want_grade = compact(str(a["grade"]))
+                # марка в названии — отдельным токеном: «… FL K10», но не «ALU AK10»
+                grade_re = re.compile(rf"(?<![A-Za-z0-9]){re.escape(want_grade)}(?![A-Za-z0-9])", re.I)
                 out.append(("марка", False, lambda it: (
                     compact(str(it["attrs"].get("grade") or "")) == want_grade
-                    or want_grade in compact(str(it.get("name") or ""))
+                    or bool(grade_re.search(homoglyph_latin(str(it.get("name") or ""))))
                 )))
         elif fam in ("drill", "mill", "reamer"):
             if fam == "mill" and q.compat_insert:
@@ -1003,6 +1094,20 @@ class CatalogSearchEngine:
         elif fam == "accessory":
             if a.get("collet_series"):
                 out.append(("серия", True, lambda it: (it["attrs"].get("collet_series") or "").upper() == a["collet_series"].upper()))
+            if a.get("jaw_series"):
+                want_series = compact(f"{a['jaw_series']}-{a['jaw_size']}")
+                out.append(("серия патрона", True, lambda it: want_series in (it.get("_name_norm") or "")))
+            if a.get("morse_from"):
+                pair = f"{a['morse_from']}/{a['morse_to']}"
+                out.append(("переход Морзе", True, lambda it: pair in str(it.get("name") or "")))
+                if a.get("with_tang"):
+                    out.append(("с лапкой", False, lambda it: "лапк" in str(it.get("name") or "")))
+            if a.get("bar_puller"):
+                out.append(("барпуллер", True, lambda it: "барпуллер" in str(it.get("name") or "").lower()))
+            if a.get("bar_shank_mm"):
+                side = f"S{a['bar_shank_mm']}"
+                out.append(("квадр. хвост", False, lambda it: (
+                    side in str(it.get("name") or "") and "квадр" in str(it.get("name") or ""))))
             if a.get("clamp_mm"):
                 want = f"{a['clamp_mm']:g}"
                 clamp_name = "под хвостовик" if "tool_holder" in q.category_hints else "диаметр зажима"
@@ -1413,7 +1518,10 @@ class CatalogSearchEngine:
                 chips.append(f"тип: {title}")
         a = q.attrs
         if q.insert_code:
-            chips.append(f"код: {q.insert_code}")
+            if a.get("insert_prefix"):
+                chips.append(f"пластина: {a['insert_prefix']} {a.get('size_code', '')}".strip())
+            else:
+                chips.append(f"код: {q.insert_code}")
         if q.holder_code and not (fam == "insert" and q.holder_compat_code):
             chips.append(f"код: {q.holder_code}")
         if q.compat_insert:
@@ -1449,6 +1557,15 @@ class CatalogSearchEngine:
             chips.append(f"марка: {a['grade']}")
         if a.get("collet_series"):
             chips.append(f"серия: {a['collet_series']}")
+        if a.get("jaw_series"):
+            chips.append(f"серия патрона: {a['jaw_series']}-{a['jaw_size']}")
+        if a.get("morse_from"):
+            chips.append(f"переход: Морзе {a['morse_from']} → Морзе {a['morse_to']}")
+        if a.get("with_tang"):
+            chips.append("с лапкой")
+        if a.get("bar_shank_mm"):
+            side = fmt_num(a["bar_shank_mm"])
+            chips.append(f"квадрат: {side}×{side} мм")
         if a.get("clamp_mm"):
             if "tool_holder" in q.category_hints:
                 chips.append(f"под хвостовик: {fmt_num(a['clamp_mm'])} мм")

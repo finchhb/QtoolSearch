@@ -89,6 +89,35 @@ ITEMS = [
     item("accessory", "machine_jaw",
          "К11-250 кулачки сборные базовые и накладные. каленые (z) Qtool",
          sku="83104", stock=6, price=1500.0),
+    item("insert", "turning_insert", "DCGT 11T302 FL K10 для точения пластина",
+         sku="DCGT11T302", iso_code="DCGT11T302", insert_shape="D", clearance_angle="C",
+         size_code="11", corner_radius_mm=0.2, chipbreaker="FL", iso_group="K", grade="K10"),
+    item("insert", "turning_insert", "DCGT 11T304 FN ALU AK10 для точения пластина",
+         sku="DCGT11T304", iso_code="DCGT11T304", insert_shape="D", clearance_angle="C",
+         size_code="11", corner_radius_mm=0.4, chipbreaker="FN", iso_group="K", grade="AK10"),
+    item("insert", "turning_insert", "DCGT 070200 FN-F23 CTP2120 для точения пластина",
+         sku="DCGT070200", iso_code="DCGT070200", insert_shape="D", clearance_angle="C",
+         size_code="7", corner_radius_mm=0.2, chipbreaker="FN-F23", iso_group="K", grade="CTP2120"),
+    item("accessory", "machine_jaw", "К11-400 кулачки обратные цельные. каленые (z) Qtool",
+         sku="83091", stock=96, price=6786.0),
+    item("accessory", "machine_jaw", "К11-400 кулачки прямые цельные. каленые (z) Qtool",
+         sku="83101", stock=72, price=6786.0),
+    item("accessory", "machine_jaw", "К11-400 кулачки сборные базовые и накладные. каленые (z) Qtool",
+         sku="83106", stock=68, price=8174.0),
+    item("accessory", "machine_jaw", "К11-400 кулачки сырые квадрат. цельные (z) Qtool",
+         sku="83110", stock=84, price=6786.0),
+    item("accessory", "machine_jaw", "К11-400 кулачки сырые обратные (ступеньки). цельные (z) Qtool",
+         sku="83115", stock=23, price=6776.0),
+    item("accessory", "machine_jaw", "К11-400 кулачки сырые прямые (ступеньки). цельные (z) Qtool",
+         sku="83116", stock=4, price=6786.0),
+    item("accessory", "accessory", "2/1 с лапкой переходная втулка (z) Qtool",
+         sku="83366", stock=1937, price=184.13),
+    item("accessory", "accessory", "3/2 с лапкой переходная втулка (z) Qtool",
+         sku="83367", stock=1611, price=234.41),
+    item("accessory", "accessory", "D16 2-50 мм барпуллер круг.хв. OLICNC", sku="67372", stock=3),
+    item("accessory", "accessory", "S16 2-50 мм барпуллер квадр.хв. OLICNC", sku="67376", stock=4),
+    item("accessory", "accessory", "S20 2-50 мм барпуллер квадр.хв. OLICNC", sku="67377", stock=4),
+    item("accessory", "accessory", "S25 2-50 мм барпуллер квадр.хв. OLICNC", sku="67378", stock=4),
 ]
 
 
@@ -118,8 +147,14 @@ class SelfContainedQueryTest(unittest.TestCase):
     def test_clarifications_are_not_self_contained(self):
         for q in ("12", "8,5", "25х25", "под CNMG12", "под APMT1604", "под пластину DNMG15",
                   "под dcmt пластину", "чистовая", "получистовая", "черновая", "наружная",
-                  "внутренняя", "под сечение 25", "M10", "cnmg12"):
+                  "внутренняя", "под сечение 25", "M10", "dcmt"):
             self.assertFalse(is_self_contained_query(q), q)
+
+    def test_bare_short_insert_code_is_self_contained(self):
+        # «DCGT 11» после запроса про держатель склеивался и повторял выдачу:
+        # код с размером — самостоятельный запрос, уточнение — только «под <код>»
+        for q in ("cnmg12", "DCGT 11", "dcgt09", "CCMT 09T304"):
+            self.assertTrue(is_self_contained_query(q), q)
 
     def test_unknown_designation_is_self_contained(self):
         # «MTA2 велдон 10» после «расточная s20 под dcmt» склеивался и повторял выдачу:
@@ -525,6 +560,108 @@ class MachineJawTest(unittest.TestCase):
         res = self.engine.search("кулачки каленые")
         self.assertEqual({p["category"] for p in res["products"]}, {"machine_jaw"})
         self.assertIn("тип: кулачки", res["chips"])
+
+    def test_jaw_series_selects_only_that_chuck_size(self):
+        # «кулачки к11-400» — кулачки именно на патрон К11-400, а не на К11-250
+        res = self.engine.search("кулачки к11-400")
+        skus = {p["sku"] for p in res["products"]}
+        self.assertEqual(skus, {"83091", "83101", "83106", "83110", "83115", "83116"})
+        self.assertEqual({p["category"] for p in res["products"]}, {"machine_jaw"})
+        self.assertIn("серия патрона: K11-400", res["chips"])
+
+    def test_jaw_series_cyrillic_ka_matches(self):
+        # серия пишется и кириллической «К», и латинской «K»
+        for q in ("кулачки к11-250", "кулачки K11-250"):
+            res = self.engine.search(q)
+            self.assertEqual([p["sku"] for p in res["products"]], ["83104"], q)
+
+
+class ShortInsertCodeTest(unittest.TestCase):
+    """Короткая запись пластины: «DCGT 11» — префикс и двузначный размер."""
+
+    def test_prefix_and_size_are_parsed(self):
+        q = Query("DCGT 11")
+        self.assertEqual(q.family, "insert")
+        self.assertEqual(q.insert_code, "DCGT11")
+        self.assertEqual(q.attrs["insert_prefix"], "DCGT")
+        self.assertEqual(q.attrs["size_code"], "11")
+
+    def test_short_code_search_returns_that_size(self):
+        res = CatalogSearchEngine(ITEMS).search("DCGT 11")
+        self.assertEqual(res["family"], "insert")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"DCGT11T302", "DCGT11T304"})
+        self.assertIn("пластина: DCGT 11", res["chips"])
+
+    def test_short_code_with_chipbreaker_and_grade(self):
+        # «DCGT 11T302 FL K10»: полное обозначение отсекает соседние размеры, марка — соседние сплавы
+        q = Query("DCGT 11T302 FL K10 для точения пластина")
+        self.assertEqual(q.insert_code, "DCGT11")
+        self.assertEqual(q.attrs["iso_tail"], "T302")
+        self.assertEqual(q.attrs["grade"], "K10")
+        res = CatalogSearchEngine(ITEMS).search("DCGT 11T302 FL K10 для точения пластина")
+        self.assertEqual([p["sku"] for p in res["products"]], ["DCGT11T302"])
+
+    def test_grade_in_name_is_a_whole_token(self):
+        # «AK10» не должен считаться маркой «K10»
+        res = CatalogSearchEngine(ITEMS).search("DCGT 11 FL K10")
+        self.assertEqual([p["sku"] for p in res["products"]], ["DCGT11T302"])
+
+    def test_second_letter_is_clearance_angle(self):
+        # «SK40», «HSK63», «ER32» — не пластины: вторая буква не задний угол
+        for q in ("SK40", "HSK63", "ER32", "MTA2"):
+            self.assertFalse(Query(q).insert_code, q)
+
+
+class MorseBushingTest(unittest.TestCase):
+    """Переходная втулка: «морзе2 на морзе 1» = каталог «2/1 с лапкой переходная втулка»."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_morse_phrase_is_parsed(self):
+        q = Query("втулка переходная морзе2 на морзе 1 с лапкой")
+        self.assertEqual(q.family, "accessory")
+        self.assertEqual((q.attrs["morse_from"], q.attrs["morse_to"]), (2, 1))
+        self.assertTrue(q.attrs["with_tang"])
+
+    def test_morse_phrase_finds_bushing(self):
+        res = self.engine.search("втулка переходная морзе2 на морзе 1 с лапкой")
+        self.assertEqual([p["sku"] for p in res["products"]], ["83366"])
+        self.assertIn("переход: Морзе 2 → Морзе 1", res["chips"])
+        self.assertIn("с лапкой", res["chips"])
+
+    def test_bare_pair_is_parsed(self):
+        q = Query("втулка 3/2 с лапкой")
+        self.assertEqual((q.attrs["morse_from"], q.attrs["morse_to"]), (3, 2))
+        res = self.engine.search("втулка 3/2 с лапкой")
+        self.assertEqual([p["sku"] for p in res["products"]], ["83367"])
+
+
+class BarPullerTest(unittest.TestCase):
+    """«барпулер» = «барпуллер»; «2525» — квадратный хвост 25×25, в каталоге «S25». """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS)
+
+    def test_alias_and_square_shank_are_parsed(self):
+        q = Query("барпулер 2525")
+        self.assertEqual(q.family, "accessory")
+        self.assertTrue(q.attrs["bar_puller"])
+        self.assertEqual(q.attrs["bar_shank_mm"], 25)
+
+    def test_search_returns_barpullers_only(self):
+        for q in ("барпулер 2525", "барпуллер 2525"):
+            res = self.engine.search(q)
+            self.assertTrue(res["products"], q)
+            self.assertTrue(all("барпуллер" in p["name"].lower() for p in res["products"]), q)
+            self.assertEqual({p["sku"] for p in res["products"]}, {"67378"}, q)
+            self.assertIn("квадрат: 25×25 мм", res["chips"], q)
+
+    def test_plain_barpuller_search_returns_whole_group(self):
+        res = self.engine.search("барпулер")
+        self.assertEqual({p["sku"] for p in res["products"]}, {"67372", "67376", "67377", "67378"})
 
 
 class ClampHoleTest(unittest.TestCase):
