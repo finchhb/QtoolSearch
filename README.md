@@ -107,11 +107,15 @@ certificate`), поставьте `pip install certifi` — код сам воз
   `response_text` (markdown) и карточки товаров с ценой, остатком и ссылкой на qtool.ru.
 - `GET /api/status` — объём каталога, наличие, дата обновления, распределение по группам, `llm_on: false`.
 - `GET /admin` — админка (локально; в публичном режиме — по `ADMIN_TOKEN`).
-- `deploy/` — `.env.example`, systemd-юнит, nginx и сниппет кнопки чата для встраивания на qtool.ru.
+- `deploy/` — systemd-юнит, nginx и сниппет кнопки чата для встраивания на qtool.ru.
+- `deploy/php/` — PHP-прокси для встроенного поиска на qtool.ru: `ai.php` (серверная часть,
+  те же запросы, что у `/api/query`, плюс `feedback` и `clear`) и `ai-widget.js` (форма и вывод ответа).
 
 Режимы: `ADVISOR_MODE=local` (по умолчанию, слушает 127.0.0.1) и `public` (админка только
 по токену, CORS/iframe только для `ALLOWED_ORIGINS`, лимит запросов на IP). Переменные окружения
-описаны в шапке `app.py` и `deploy/.env.example`.
+описаны в шапке `app.py`. Для `deploy/php/ai.php` сервис слушает только loopback и запускается
+с `TRUST_PROXY=1`: прокси передаёт реальный IP посетителя в `X-Forwarded-For`, иначе лимит
+запросов считается общим на весь сайт.
 
 ## Проверка качества
 
