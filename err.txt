@@ -1,0 +1,2 @@
+PHP Warning:  preg_match(): Unknown modifier 'Ñ' in C:\Users\Semkin\Documents\Qoder\2026-11-12\5c7e8f1a\repo\php\src\Query.php on line 152
+PHP Warning:  preg_match(): Unknown modifier ']' in C:\Users\Semkin\Documents\Qoder\2026-11-12\5c7e8f1a\repo\php\src\Query.php on line 489
