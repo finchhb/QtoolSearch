@@ -1,0 +1,509 @@
+--- a/src/training.py
++++ b/src/training.py
+@@ -2,6 +2,7 @@
+ src/training.py - РѕР±СѓС‡РµРЅРёРµ РїР°СЂСЃРµСЂР° РЅР° РїСЂРёРјРµСЂР°С… С‚РµС…РЅРѕР»РѕРіР° СЃ РІРµРєС‚РѕСЂРЅС‹Рј РїРѕРёСЃРєРѕРј СЃС…РѕР¶РµСЃС‚Рё (TF-IDF / Cosine Similarity).
+ """
+ import csv
++import logging
+ import math
+ import os
+ import re
+@@ -9,8 +10,20 @@
+ import time
+ from typing import Any, Dict, List, Optional
+ 
++from src.code_normalize import homoglyph_latin
++
++logger = logging.getLogger(__name__)
++
+ PATH = os.path.join("data", "training_examples.csv")
+ MATERIALS_CSV = os.path.join("data", "materials.csv")
++# РїРѕСЂРѕРі РєРѕСЃРёРЅСѓСЃРЅРѕР№ Р±Р»РёР·РѕСЃС‚Рё РґР»СЏ В«РїРѕС…РѕР¶РµРіРѕВ» Р·Р°РїСЂРѕСЃР°; РЅР°СЃС‚СЂР°РёРІР°РµС‚СЃСЏ Р±РµР· РїСЂР°РІРєРё РєРѕРґР°
++try:
++    SIM_THRESHOLD = min(1.0, max(0.0, float(os.environ.get("QTOOL_TRAIN_SIM_THRESHOLD", "0.35"))))
++except ValueError:
++    SIM_THRESHOLD = 0.35
++# РїРѕР»СЏ-РїРѕРїСЂР°РІРєРё, РєРѕС‚РѕСЂС‹Рµ РІР»РёСЏСЋС‚ РЅР° РїРѕРёСЃРє; comment вЂ” С‚РѕР»СЊРєРѕ РґР»СЏ Р°РґРјРёРЅРєРё
++TRAIN_FIELDS = ("correct_iso", "correct_operation", "correct_skus", "correct_shape", "correct_size", "correct_radius")
++CORRECTION_FIELDS = TRAIN_FIELDS + ("comment",)
+ FIELDS = [
+     "id", "ts", "query", "query_norm", "parser_iso", "parser_operation", "parser_top_skus",
+     "correct_iso", "correct_operation", "correct_shape", "correct_size", "correct_radius",
+@@ -19,9 +32,9 @@
+ SHAPE_OK = set("ABCDEFGHKLMOPRSTVW")
+ ISO_OK = {"P", "M", "K", "N", "S", "H"}
+ OP_OK = {"finishing", "semi_finishing", "roughing"}
+-_LATIN2CYR = str.maketrans("abcehkmoptxy", "Р°РІСЃРµРЅРєРјРѕСЂС‚С…Сѓ")
++_LATIN2CYR = str.maketrans("abcehkmoptxygd", "Р°РІСЃРµРЅРєРјРѕСЂС‚С…СѓРіРґ")
+ _lock = threading.Lock()
+-_cache: Dict[str, Any] = {"mtime": 0.0, "rows": []}
++_cache: Dict[str, Any] = {"mtime": 0.0, "rows": [], "index": None, "exact": None}
+ 
+ 
+ def normalize(text: str) -> str:
+@@ -30,6 +43,8 @@
+     t = re.sub(r"\bРІРµР»РґРѕРЅ", "weldon", t)
+     t = re.sub(r"\bР±С‚(?=\d)", "РІС‚", t)
+     t = t.translate(_LATIN2CYR)
++    # РІРёР·СѓР°Р»СЊРЅС‹Рµ РґРІРѕР№РЅРёРєРё -> РѕРґРЅР° С„РѕСЂРјР°: В«Р“РЎ4325В» == В«GC4325В», В«РЎNMGВ» == В«CNMGВ»
++    t = homoglyph_latin(t)
+     t = re.sub(r"[^\w\-]+", " ", t, flags=re.U)
+     return re.sub(r"\s+", " ", t).strip()
+ 
+@@ -38,6 +53,25 @@
+     return [w for w in normalize(text).split() if len(w) > 1]
+ 
+ 
++def _build_index(rows: List[Dict[str, str]]) -> Dict[str, Any]:
++    """TF-IDF РІРµРєС‚РѕСЂС‹ РїСЂРёРјРµСЂРѕРІ: РѕРґРёРЅ СЂР°Р· РЅР° РІРµСЂСЃРёСЋ С„Р°Р№Р»Р°, Р° РЅРµ РЅР° РєР°Р¶РґС‹Р№ Р·Р°РїСЂРѕСЃ."""
++    docs = [_tokenize(r["query"]) for r in rows]
++    df: Dict[str, int] = {}
++    for toks in docs:
++        for t in set(toks):
++            df[t] = df.get(t, 0) + 1
++    n = len(rows)
++    vecs = []
++    for toks in docs:
++        tf: Dict[str, int] = {}
++        for t in toks:
++            tf[t] = tf.get(t, 0) + 1
++        v = {t: c * (math.log(n / df[t]) + 1.0) for t, c in tf.items()}
++        norm = math.sqrt(sum(x * x for x in v.values())) or 1.0
++        vecs.append({t: x / norm for t, x in v.items()})
++    return {"df": df, "vecs": vecs, "n": n}
++
++
+ def _read() -> List[Dict[str, str]]:
+     try:
+         mt = os.path.getmtime(PATH)
+@@ -51,9 +85,10 @@
+             for r in csv.DictReader(f, delimiter=";"):
+                 if (r.get("query") or "").strip():
+                     rows.append({k: (r.get(k) or "") for k in FIELDS})
+-    except Exception:
++    except Exception as e:
++        logger.warning("РўР°Р±Р»РёС†Р° РѕР±СѓС‡РµРЅРёСЏ %s РЅРµ С‡РёС‚Р°РµС‚СЃСЏ (%s); РїСЂРёРјРµСЂС‹ РЅРµ РїСЂРёРјРµРЅСЏСЋС‚СЃСЏ", PATH, e)
+         rows = []
+-    _cache.update(mtime=mt, rows=rows)
++    _cache.update(mtime=mt, rows=rows, index=None, exact=None)
+     return rows
+ 
+ 
+@@ -67,7 +102,7 @@
+         _cache["mtime"] = os.path.getmtime(PATH)
+     except OSError:
+         pass
+-    _cache["rows"] = rows
++    _cache.update(rows=rows, index=None, exact=None)
+ 
+ 
+ def list_examples(limit: int = 300) -> List[Dict[str, str]]:
+@@ -92,7 +127,7 @@
+     correct_radius: str = "",
+     *args,
+     **kwargs,
+-) -> Dict[str, str]:
++) -> Optional[Dict[str, str]]:
+     iso = (correct_iso or "").strip().upper()
+     op = (correct_operation or "").strip().lower()
+     op = {"medium": "semi_finishing"}.get(op, op)
+@@ -118,6 +153,9 @@
+         "status": "new",
+         "rules_added": "",
+     }
++    # РЅРµС‡РµРјСѓ СѓС‡РёС‚СЊСЃСЏ вЂ” РЅРµ Р·Р°СЃРѕСЂСЏРµРј С‚Р°Р±Р»РёС†Сѓ (РІР°Р»РёРґР°С†РёСЏ Р¶РёРІС‘С‚ Р·РґРµСЃСЊ, Р° РЅРµ РІ app.py)
++    if not any(entry[k] for k in CORRECTION_FIELDS):
++        return None
+     with _lock:
+         rows = list(_read())
+         rows = [r for r in rows if r["query_norm"] != entry["query_norm"]]
+@@ -137,79 +175,77 @@
+         return True
+ 
+ 
+-def lookup(query: str) -> Optional[Dict[str, str]]:
++def _exact_match(query: str) -> Optional[Dict[str, str]]:
++    """РўРѕС‡РЅРѕ С‚РѕС‚ Р¶Рµ Р·Р°РїСЂРѕСЃ (РїРѕСЃР»Рµ РЅРѕСЂРјР°Р»РёР·Р°С†РёРё), С‡С‚Рѕ Рё РІ РїСЂРёРјРµСЂРµ С‚РµС…РЅРѕР»РѕРіР°. O(1) РїРѕ РєСЌС€Сѓ."""
+     if os.environ.get("TRAINING_DISABLE") == "1":
+         return None
+-    with _lock:
+-        rows = [
+-            r for r in _read()
+-            if r.get("status") != "rejected"
+-            and any(r.get(k) for k in ("correct_iso", "correct_operation", "correct_skus", "correct_shape", "correct_size", "correct_radius"))
+-        ]
+-    if not rows:
++    q_norm = normalize(query)
++    if not q_norm:
+         return None
++    with _lock:
++        rows = _read()
++        exact = _cache.get("exact")
++        if exact is None:
++            exact = {}
++            for r in rows:
++                if r.get("status") != "rejected":
++                    exact.setdefault(normalize(r.get("query") or ""), r)
++            _cache["exact"] = exact
++    return exact.get(q_norm)
+ 
+-    q_norm = normalize(query)
+-    for r in rows:
+-        if normalize(r.get("query") or "") == q_norm:
+-            return r
+ 
++def _vector_search(query: str) -> Optional[Dict[str, str]]:
++    """РџРѕС…РѕР¶РёР№ Р·Р°РїСЂРѕСЃ РїРѕ TF-IDF / cosine similarity СЃСЂРµРґРё РїСЂРёРјРµСЂРѕРІ СЃ РїРѕРїСЂР°РІРєР°РјРё."""
++    if os.environ.get("TRAINING_DISABLE") == "1":
++        return None
+     q_tokens = _tokenize(query)
+     if not q_tokens:
+         return None
++    with _lock:
++        rows = [r for r in _read()
++                if r.get("status") != "rejected" and any(r.get(k) for k in TRAIN_FIELDS)]
++        index = _cache.get("index")
++        if index is None:
++            # РёРЅРґРµРєСЃ СЃС‚СЂРѕРёС‚СЃСЏ РїРѕ С‚РѕРјСѓ Р¶Рµ РѕС‚С„РёР»СЊС‚СЂРѕРІР°РЅРЅРѕРјСѓ СЃРїРёСЃРєСѓ, РїРѕ РєРѕС‚РѕСЂРѕРјСѓ РёРґС‘С‚ РѕС†РµРЅРєР°
++            index = _build_index(rows)
++            _cache["index"] = index
++    if not rows:
++        return None
++    df, vecs, total_docs = index["df"], index["vecs"], index["n"]
++    tf: Dict[str, int] = {}
++    for t in q_tokens:
++        tf[t] = tf.get(t, 0) + 1
++    q_vec: Dict[str, float] = {}
++    norm_sq = 0.0
++    for t, c in tf.items():
++        val = c * (math.log(total_docs / df.get(t, 1)) + 1.0)
++        q_vec[t] = val
++        norm_sq += val * val
++    norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
++    q_vec = {k: w / norm for k, w in q_vec.items()}
+ 
+-    doc_tokens_list = [_tokenize(r["query"]) for r in rows]
+-    total_docs = len(rows)
+-    df: Dict[str, int] = {}
+-    for toks in doc_tokens_list:
+-        for t in set(toks):
+-            df[t] = df.get(t, 0) + 1
+-
+-    def get_vector(toks: List[str]) -> Dict[str, float]:
+-        v: Dict[str, int] = {}
+-        for t in toks:
+-            v[t] = v.get(t, 0) + 1
+-        norm_sq = 0.0
+-        res: Dict[str, float] = {}
+-        for t, tf in v.items():
+-            idf = math.log(total_docs / df.get(t, 1)) + 1.0
+-            val = tf * idf
+-            res[t] = val
+-            norm_sq += val * val
+-        norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
+-        return {k: w / norm for k, w in res.items()}
+-
+-    q_vec = get_vector(q_tokens)
+     best_match = None
+     best_score = 0.0
+-
+     for idx, r in enumerate(rows):
+-        d_vec = get_vector(doc_tokens_list[idx])
++        d_vec = vecs[idx]
+         score = sum(q_vec[t] * d_vec[t] for t in q_vec if t in d_vec)
+         if score > best_score:
+             best_score = score
+             best_match = r
+ 
+-    if best_match and best_score >= 0.35:
++    if best_match and best_score >= SIM_THRESHOLD:
+         return best_match
+     return None
+ 
+ 
++def lookup(query: str) -> Optional[Dict[str, str]]:
++    """РЎРЅР°С‡Р°Р»Р° С‚РѕС‡РЅРѕРµ СЃРѕРІРїР°РґРµРЅРёРµ Р·Р°РїСЂРѕСЃР°, Р·Р°С‚РµРј РІРµРєС‚РѕСЂРЅС‹Р№ РїРѕРёСЃРє РїРѕС…РѕР¶РµРіРѕ."""
++    return _exact_match(query) or _vector_search(query)
++
++
+ def lookup_exact(query: str) -> Optional[Dict[str, str]]:
+     """РўРѕС‡РЅРѕ С‚РѕС‚ Р¶Рµ Р·Р°РїСЂРѕСЃ, С‡С‚Рѕ Рё РІ РїСЂРёРјРµСЂРµ С‚РµС…РЅРѕР»РѕРіР°: С‚РѕР»СЊРєРѕ РґР»СЏ РЅРµРіРѕ РѕС‚РІРµС‚ СЃС‡РёС‚Р°РµРј СЌС‚Р°Р»РѕРЅРЅС‹Рј."""
+-    if os.environ.get("TRAINING_DISABLE") == "1":
+-        return None
+-    q_norm = normalize(query)
+-    if not q_norm:
+-        return None
+-    with _lock:
+-        rows = list(_read())
+-    for r in rows:
+-        if r.get("status") == "rejected":
+-            continue
+-        if normalize(r.get("query") or "") == q_norm:
+-            return r
+-    return None
++    return _exact_match(query)
+ 
+ 
+ def split_skus(value: str) -> List[str]:
+--- a/src/catalog_search.py
++++ b/src/catalog_search.py
+@@ -15,6 +15,7 @@
+ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+ 
+ from src import rates
++from src.materials_mapping import detect_iso_group
+ from src.code_normalize import cyrillic_code_letters, homoglyph_latin, layout_to_latin
+ from src.iso5608 import parse_holder_code
+ from src.site_catalog import _RE_DIA, _RE_MM, _dims, extract_common, extract_teeth, extract_thread
+@@ -41,7 +42,9 @@
+     for pattern, iso in _MATERIAL_ISO:
+         if re.search(pattern, low):
+             return iso
+-    return None
++    # РїСЂР°РІРёР»Р° С‚РµС…РЅРѕР»РѕРіР° (data/materials.csv) Рё СЃРїСЂР°РІРѕС‡РЅРёРє (materials_iso.csv):
++    # РёРЅР°С‡Рµ РєРЅРѕРїРєР° В«РґРѕР±Р°РІРёС‚СЊ РїСЂР°РІРёР»Р° РјР°С‚РµСЂРёР°Р»РѕРІВ» РІ Р°РґРјРёРЅРєРµ РЅРµ РІР»РёСЏРµС‚ РЅР° РїРѕРёСЃРє РїРѕ СЃР°Р№С‚Сѓ
++    return detect_iso_group(low) or None
+ 
+ 
+ def operation_from_text(text: str) -> Optional[str]:
+@@ -1014,6 +1017,9 @@
+             attrs = it.get("attrs")
+             if not attrs:
+                 attrs = it["attrs"] = {}
++            # РєР»СЋС‡Рё РґР»СЏ РѕС‚РІРµС‚Р° С‚РµС…РЅРѕР»РѕРіР° (pin): РѕРґРёРЅ СЂР°Р· РїСЂРё Р·Р°РіСЂСѓР·РєРµ, Р° РЅРµ РЅР° РєР°Р¶РґС‹Р№ Р·Р°РїСЂРѕСЃ
++            it["_pin_name"] = homoglyph_latin(compact(str(it.get("name") or "")))
++            it["_pin_sku"] = homoglyph_latin(compact(str(it.get("sku") or "")))
+             iso = str(attrs.get("iso_code") or "").strip().upper()
+             if len(iso) >= 4:
+                 prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
+@@ -1450,7 +1456,9 @@
+ 
+     # ---- РѕСЃРЅРѕРІРЅРѕР№ РїРѕРёСЃРє --------------------------------------------------------------------------
+     def search(self, text: str, limit: int = 8, in_stock_only: bool = True,
+-               pin_names: Optional[Sequence[str]] = None) -> Dict[str, Any]:
++               pin_names: Optional[Sequence[str]] = None,
++               attr_overrides: Optional[Dict[str, Any]] = None,
++               overrides_replace: bool = False) -> Dict[str, Any]:
+         q = Query(text, self._insert_prefixes)
+         if q.insert_code:
+             q.insert_code = self._canonical_insert_code(q.insert_code)
+@@ -1458,6 +1466,14 @@
+             fixed = self._canonical_insert_code(q.compat_insert)
+             if fixed != q.compat_insert:
+                 q._set_compat(fixed)
++        if attr_overrides:
++            # РїРѕРїСЂР°РІРєРё С‚РµС…РЅРѕР»РѕРіР° РёР· С‚Р°Р±Р»РёС†С‹ РѕР±СѓС‡РµРЅРёСЏ: С‚РѕС‡РЅРѕРµ СЃРѕРІРїР°РґРµРЅРёРµ Р·Р°РїСЂРѕСЃР° вЂ” Р·Р°РјРµРЅСЏРµРј
++            # Р°С‚СЂРёР±СѓС‚С‹ РїР°СЂСЃРµСЂР°, РїРѕС…РѕР¶РёР№ Р·Р°РїСЂРѕСЃ (TF-IDF) вЂ” С‚РѕР»СЊРєРѕ Р·Р°РїРѕР»РЅСЏРµРј РЅРµРґРѕСЃС‚Р°СЋС‰РёРµ
++            for k, v in attr_overrides.items():
++                if v in (None, ""):
++                    continue
++                if overrides_replace or q.attrs.get(k) in (None, ""):
++                    q.attrs[k] = v
+         if pin_names:
+             pinned = self._search_pinned(q, pin_names, limit, in_stock_only)
+             if pinned:
+@@ -1554,8 +1570,8 @@
+     @staticmethod
+     def _pinned_match(value: Any, want: str) -> bool:
+         """РђСЂС‚РёРєСѓР» РёР· РѕС‚РІРµС‚Р° С‚РµС…РЅРѕР»РѕРіР° СЃРѕРІРїР°РґР°РµС‚ СЃ РЅР°С‡Р°Р»РѕРј РЅР°Р·РІР°РЅРёСЏ/Р°СЂС‚РёРєСѓР»Р° РїРѕР·РёС†РёРё."""
+-        v = compact(str(value or ""))
+-        w = compact(str(want or ""))
++        v = homoglyph_latin(compact(str(value or "")))
++        w = homoglyph_latin(compact(str(want or "")))
+         if not v or not w:
+             return False
+         if v == w:
+@@ -1567,13 +1583,16 @@
+                        in_stock_only: bool) -> Optional[Dict[str, Any]]:
+         """РћС‚РІРµС‚ С‚РµС…РЅРѕР»РѕРіР° РёР· С‚Р°Р±Р»РёС†С‹ РѕР±СѓС‡РµРЅРёСЏ: РїРѕРєР°Р·С‹РІР°РµРј РёРјРµРЅРЅРѕ РЅР°Р·РІР°РЅРЅС‹Рµ РїРѕР·РёС†РёРё."""
+         pool, seen = [], set()
++        wants = [homoglyph_latin(compact(str(n or ""))) for n in names]
++        wants = [w for w in wants if w]
+         for fam_pool in self.by_family.values():
+             for it in fam_pool:
+                 key = it.get("id") or id(it)
+                 if key in seen:
+                     continue
+-                if any(self._pinned_match(it.get("name"), n) or self._pinned_match(it.get("sku"), n)
+-                       for n in names):
++                v_name, v_sku = it.get("_pin_name", ""), it.get("_pin_sku", "")
++                if any(v == w or (v.startswith(w) and not v[len(w):len(w) + 1].isdigit())
++                       for w in wants for v in (v_name, v_sku) if v):
+                     pool.append(it)
+                     seen.add(key)
+         if not pool:
+--- a/src/engine.py
++++ b/src/engine.py
+@@ -30,7 +30,7 @@
+ )
+ from src import iso1832, rates, training
+ from src.analogs_engine import AnalogsEngine
+-from src.catalog_search import CatalogSearchEngine
++from src.catalog_search import CatalogSearchEngine, material_iso, operation_from_text
+ from src.clarification_advisor import ClarificationAdvisor
+ from src.hybrid_search import HybridSearchEngine
+ from src.llm_client import LLMClient
+@@ -653,12 +653,12 @@
+     # ------------------------------------------------------------------------------------------
+     # РћСЃРЅРѕРІРЅРѕР№ РІС…РѕРґ: РІРЅСѓС‚СЂРµРЅРЅРёР№ РїР°СЂСЃРµСЂ РѕС‚РІРµС‡Р°РµС‚ РІСЃРµРіРґР°; LLM Р»РёС€СЊ РїСЂРѕРІРµСЂСЏРµС‚ РїР°СЂР°РјРµС‚СЂС‹ (src/reviewer.py)
+     # ------------------------------------------------------------------------------------------
+-    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool) -> Dict[str, Any]:
++    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool, force_local: bool = False) -> Dict[str, Any]:
+         """РќРµСЃРєРѕР»СЊРєРѕ РїРѕР·РёС†РёР№ РІ РѕРґРЅРѕРј Р·Р°РїСЂРѕСЃРµ: РєР°Р¶РґР°СЏ РёС‰РµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ, РѕС‚РІРµС‚ РѕР±СЉРµРґРёРЅСЏРµС‚СЃСЏ."""
+         texts, all_prods, steps, first = [], [], [], None
+         seen = set()
+         for i, pos in enumerate(positions, 1):
+-            r = self.process_query_autonomous(pos["text"], allow_review=allow_review)
++            r = self.process_query_autonomous(pos["text"], allow_review=allow_review, force_local=force_local)
+             if first is None:
+                 first = r
+             qty = f" вЂ” {pos['qty']} С€С‚" if pos.get("qty") else ""
+@@ -679,8 +679,8 @@
+         allow_review = False
+         positions = iso1832.split_positions(user_query)
+         if len(positions) > 1:
+-            return self._process_multi(positions, allow_review)
+-        res = self.process_query_autonomous(user_query, allow_review=allow_review)
++            return self._process_multi(positions, allow_review, force_local=force_local)
++        res = self.process_query_autonomous(user_query, allow_review=allow_review, force_local=force_local)
+         res["provider"] = "site_catalog"
+         res["model"] = "deterministic-catalog"
+         res.setdefault("llm_status", "not_needed")
+@@ -835,25 +835,66 @@
+     # ------------------------------------------------------------------------------------------
+     # РљР°С‚Р°Р»РѕРі СЃР°Р№С‚Р° qtool.ru: РѕС‚РІРµС‚ РїРѕ РІСЃРµРј РіСЂСѓРїРїР°Рј (Р±РµР· LLM)
+     # ------------------------------------------------------------------------------------------
++    _TRAIN_ATTR_MAP = (
++        ("correct_iso", "iso_group"), ("correct_operation", "operation"),
++        ("correct_shape", "plate_shape"), ("correct_size", "plate_size"),
++    )
++
+     def _site_answer(self, user_query: str, site: CatalogSearchEngine) -> Dict[str, Any]:
+-        # РўРѕС‡РЅС‹Р№ РїСЂРёРјРµСЂ С‚РµС…РЅРѕР»РѕРіР° РёР· С‚Р°Р±Р»РёС†С‹ РѕР±СѓС‡РµРЅРёСЏ: РїРѕРєР°Р·С‹РІР°РµРј РЅР°Р·РІР°РЅРЅС‹Рµ РёРј РїРѕР·РёС†РёРё
+-        example = training.lookup_exact(user_query)
+-        pins = training.split_skus(example.get("correct_skus") or "") if example else []
+-        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None)
++        # РџСЂРёРјРµСЂ С‚РµС…РЅРѕР»РѕРіР° РґРµР№СЃС‚РІСѓРµС‚ Рё РІ РјР°СЂС€СЂСѓС‚Рµ РєР°С‚Р°Р»РѕРіР° СЃР°Р№С‚Р°:
++        # С‚РѕС‡РЅРѕРµ СЃРѕРІРїР°РґРµРЅРёРµ Р·Р°РїСЂРѕСЃР° вЂ” РїРёРЅС‹ Р°СЂС‚РёРєСѓР»РѕРІ + Р·Р°РјРµРЅР° Р°С‚СЂРёР±СѓС‚РѕРІ РїР°СЂСЃРµСЂР°,
++        # РїРѕС…РѕР¶РёР№ Р·Р°РїСЂРѕСЃ (TF-IDF) вЂ” С‚РѕР»СЊРєРѕ Р·Р°РїРѕР»РЅРµРЅРёРµ РЅРµРґРѕСЃС‚Р°СЋС‰РёС… Р°С‚СЂРёР±СѓС‚РѕРІ.
++        exact = training.lookup_exact(user_query)
++        example = exact or training.lookup(user_query)
++        pins = training.split_skus(exact.get("correct_skus") or "") if exact else []
++        overrides: Dict[str, Any] = {}
++        if example:
++            for src_key, dst_key in self._TRAIN_ATTR_MAP:
++                if example.get(src_key):
++                    overrides[dst_key] = example[src_key]
++            if example.get("correct_radius"):
++                try:
++                    overrides["corner_radius_mm"] = float(example["correct_radius"])
++                except ValueError:
++                    pass
++            if not exact:
++                # РїРѕС…РѕР¶РёР№ Р·Р°РїСЂРѕСЃ: СЏРІРЅРѕ РЅР°Р·РІР°РЅРЅС‹Р№ РІ Р·Р°РїСЂРѕСЃРµ РјР°С‚РµСЂРёР°Р»/РѕР±СЂР°Р±РѕС‚РєР° РІР°Р¶РЅРµРµ РїСЂРёРјРµСЂР°,
++                # РЅРѕ СЃРѕРІРїР°РґР°СЋС‰РµРµ Р·РЅР°С‡РµРЅРёРµ РѕСЃС‚Р°РІР»СЏРµРј (РґР»СЏ Р·Р°РїСЂРѕСЃРѕРІ Р±РµР· РіСЂСѓРїРїС‹ РїР°СЂСЃРµСЂ РµРіРѕ РЅРµ РёР·РІР»РµРєР°РµС‚)
++                mi = material_iso(user_query)
++                if mi and mi != overrides.get("iso_group"):
++                    overrides.pop("iso_group", None)
++                op = operation_from_text(user_query)
++                if op and op != overrides.get("operation"):
++                    overrides.pop("operation", None)
++        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None,
++                          attr_overrides=overrides or None, overrides_replace=bool(exact))
+         if not res.get("products"):
+             self._log_unrecognized(user_query)
+         attrs = res.get("parsed") or {}
+         parsed = {
+             "iso": attrs.get("iso_group") or "", "operation": attrs.get("operation") or "",
+-            "shape": attrs.get("insert_shape") or "", "size": attrs.get("size_code") or "",
++            "shape": attrs.get("insert_shape") or attrs.get("plate_shape") or "",
++            "size": attrs.get("size_code") or attrs.get("plate_size") or "",
+             "code": res.get("insert_code") or attrs.get("iso_code") or "",
+             "radius": attrs.get("corner_radius_mm"),
+         }
++        text = self._format_site_response(res)
++        if example and (overrides or pins):
++            bits = []
++            if example.get("correct_iso"):
++                bits.append(f"ISO {example['correct_iso']}")
++            if example.get("correct_operation"):
++                bits.append(self._OP_NAMES.get(example["correct_operation"], example["correct_operation"]))
++            note = f"> рџ“љ РџСЂРёРјРµРЅС‘РЅ РїСЂРёРјРµСЂ С‚РµС…РЅРѕР»РѕРіР° в„–{example['id']}" + (": " + ", ".join(bits) if bits else "")
++            if example.get("comment"):
++                note += f". {example['comment']}"
++            text = note + "\n\n" + text
++            res["trained_example"] = example["id"]
+         return {
+             "mode": "site_catalog", "decision": "site_search", "tool_called": "catalog_search",
+             "tool_result": res,
+             "tool_steps": [{"step": 1, "function": "catalog_search", "arguments": {"query": user_query}, "result": res}],
+-            "response_text": self._format_site_response(res), "parsed": parsed,
++            "response_text": text, "parsed": parsed,
+             "llm_checked": False, "llm_status": "not_needed",
+         }
+ 
+@@ -989,7 +1030,7 @@
+                 lines.append(f"{i}. {tip}")
+         return "\n".join(lines).strip()
+ 
+-    def process_query_autonomous(self, user_query: str, allow_review: bool = False) -> Dict[str, Any]:
++    def process_query_autonomous(self, user_query: str, allow_review: bool = False, force_local: bool = False) -> Dict[str, Any]:
+         self._current_user_query = user_query
+         lower = user_query.lower()
+         completeness = self.clarification_advisor.analyze_query_completeness(user_query)
+@@ -1008,7 +1049,7 @@
+ 
+         # 2. РљР°С‚Р°Р»РѕРі СЃР°Р№С‚Р° qtool.ru (/upload): РІСЃРµ РіСЂСѓРїРїС‹ РѕРґРЅРёРј РґРµС‚РµСЂРјРёРЅРёСЂРѕРІР°РЅРЅС‹Рј РїРѕРёСЃРєРѕРј,
+         # РІРєР»СЋС‡Р°СЏ РїРѕРґР±РѕСЂ СЃРѕРІРјРµСЃС‚РёРјРѕРіРѕ РёРЅСЃС‚СЂСѓРјРµРЅС‚Р° (В«РґРµСЂР¶Р°РІРєР° РїРѕРґ РїР»Р°СЃС‚РёРЅСѓ CNMGВ»).
+-        site = self.get_site_engine()
++        site = None if force_local else self.get_site_engine()
+         if site is not None:
+             return self._site_answer(user_query, site)
+ 
+--- a/src/site_catalog.py
++++ b/src/site_catalog.py
+@@ -26,6 +26,11 @@
+ DATA_DIR = os.environ.get("ADVISOR_DATA_DIR", "data")
+ UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+ SITE_CSV = os.path.join(DATA_DIR, "catalog_site.csv")
++# РјРёРЅРёРјР°Р»СЊРЅР°СЏ РґРѕР»СЏ РїСЂРµР¶РЅРµРіРѕ РѕР±СЉС‘РјР° РєР°С‚Р°Р»РѕРіР° РґР»СЏ РїСЂРёРЅСЏС‚РёСЏ РЅРѕРІРѕРіРѕ СЃРЅРёРјРєР° (Р·Р°С‰РёС‚Р° РѕС‚ Р±РёС‚С‹С… РІС‹РіСЂСѓР·РѕРє)
++try:
++    SNAPSHOT_MIN_RATIO = min(1.0, max(0.0, float(os.environ.get("QTOOL_SNAPSHOT_MIN_RATIO", "0.8"))))
++except ValueError:
++    SNAPSHOT_MIN_RATIO = 0.8
+ MANIFEST = os.path.join(DATA_DIR, "site_manifest.json")
+ URLS_JSON = os.path.join(DATA_DIR, "site_urls.json")
+ 
+@@ -970,8 +975,8 @@
+     prev_total = int(prev.get("total") or 0)
+     total = len(merged)
+     warnings = []
+-    if prev_total and total < prev_total * 0.8:
+-        raise ValueError(f"РћС‚РєР»РѕРЅРµРЅРёРµ РѕР±СЉС‘РјР° РєР°С‚Р°Р»РѕРіР°: Р±С‹Р»Рѕ {prev_total}, СЃС‚Р°Р»Рѕ {total} (< 80%). РЎРЅРёРјРѕРє РЅРµ РїРѕРґРјРµРЅС‘РЅ.")
++    if prev_total and total < prev_total * SNAPSHOT_MIN_RATIO:
++        raise ValueError(f"РћС‚РєР»РѕРЅРµРЅРёРµ РѕР±СЉС‘РјР° РєР°С‚Р°Р»РѕРіР°: Р±С‹Р»Рѕ {prev_total}, СЃС‚Р°Р»Рѕ {total} (< {SNAPSHOT_MIN_RATIO:.0%}). РЎРЅРёРјРѕРє РЅРµ РїРѕРґРјРµРЅС‘РЅ.")
+     if UNKNOWN_SECTIONS:
+         warnings.append("РќРµРёР·РІРµСЃС‚РЅС‹Рµ СЂР°Р·РґРµР»С‹ РѕС‚РїСЂР°РІР»РµРЅС‹ РІ РєР°СЂР°РЅС‚РёРЅ: " + "; ".join(UNKNOWN_SECTIONS[:10]))
+ 
+--- a/app.py
++++ b/app.py
+@@ -424,9 +424,7 @@
+                 ex = training.add_example(q, str(body.get("correct_iso", "")), str(body.get("correct_operation", "")),
+                                           str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed,
+                                           str(body.get("correct_shape", "")), str(body.get("correct_size", "")), str(body.get("correct_radius", "")))
+-                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]
+-                        or ex["correct_shape"] or ex["correct_size"] or ex["correct_radius"]):
+-                    training.delete_example(ex["id"])
++                if ex is None:
+                     return self._json({"ok": False, "message": "Р—Р°РїРѕР»РЅРёС‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРЅРѕ РїРѕР»Рµ: РіСЂСѓРїРїСѓ ISO, РІРёРґ РѕР±СЂР°Р±РѕС‚РєРё, РіРµРѕРјРµС‚СЂРёСЋ, СЂР°Р·РјРµСЂ, СЂР°РґРёСѓСЃ, Р°СЂС‚РёРєСѓР»С‹ РёР»Рё РєРѕРјРјРµРЅС‚Р°СЂРёР№"})
+                 suggested = training.suggest_tokens(q) if ex["correct_iso"] and ex["correct_iso"] != (parsed.get("iso") or "") else []
+                 return self._json({"ok": True, "id": ex["id"], "suggested": suggested, "iso": ex["correct_iso"],
+@@ -439,7 +437,7 @@
+                 return self._json({"ok": n > 0, "message": f"Р”РѕР±Р°РІР»РµРЅРѕ РїСЂР°РІРёР» РјР°С‚РµСЂРёР°Р»РѕРІ: {n}" if n else "РџСЂР°РІРёР»Р° РЅРµ РґРѕР±Р°РІР»РµРЅС‹ (СѓР¶Рµ РµСЃС‚СЊ РёР»Рё РЅРµ РІС‹Р±СЂР°РЅС‹)"})
+             if action == "train_test":
+                 q = str(body.get("query", "")).strip()[:MAX_QUERY_LEN]
+-                res = engine.process_query(q, force_local=True)
++                res = engine.process_query(q)  # Р±РѕРµРІРѕР№ РјР°СЂС€СЂСѓС‚ (РєР°С‚Р°Р»РѕРі СЃР°Р№С‚Р° + РѕР±СѓС‡РµРЅРёРµ), Р° РЅРµ Р·Р°РїР°СЃРЅРѕР№ РїР°СЂСЃРµСЂ
+                 return self._json({"ok": True, "message": "Р“РѕС‚РѕРІРѕ", "parsed": res.get("parsed"), "response_text": res.get("response_text", ""),
+                                    "decision": res.get("decision")})
+             if action == "source":

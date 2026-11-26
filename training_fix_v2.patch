@@ -1,0 +1,697 @@
+--- a/src/training.py
++++ b/src/training.py
+@@ -2,6 +2,7 @@
+ src/training.py - обучение парсера на примерах технолога с векторным поиском схожести (TF-IDF / Cosine Similarity).
+ """
+ import csv
++import logging
+ import math
+ import os
+ import re
+@@ -9,8 +10,20 @@
+ import time
+ from typing import Any, Dict, List, Optional
+ 
++from src.code_normalize import homoglyph_latin
++
++logger = logging.getLogger(__name__)
++
+ PATH = os.path.join("data", "training_examples.csv")
+ MATERIALS_CSV = os.path.join("data", "materials.csv")
++# порог косинусной близости для «похожего» запроса; настраивается без правки кода
++try:
++    SIM_THRESHOLD = min(1.0, max(0.0, float(os.environ.get("QTOOL_TRAIN_SIM_THRESHOLD", "0.35"))))
++except ValueError:
++    SIM_THRESHOLD = 0.35
++# поля-поправки, которые влияют на поиск; comment — только для админки
++TRAIN_FIELDS = ("correct_iso", "correct_operation", "correct_skus", "correct_shape", "correct_size", "correct_radius")
++CORRECTION_FIELDS = TRAIN_FIELDS + ("comment",)
+ FIELDS = [
+     "id", "ts", "query", "query_norm", "parser_iso", "parser_operation", "parser_top_skus",
+     "correct_iso", "correct_operation", "correct_shape", "correct_size", "correct_radius",
+@@ -19,9 +32,9 @@
+ SHAPE_OK = set("ABCDEFGHKLMOPRSTVW")
+ ISO_OK = {"P", "M", "K", "N", "S", "H"}
+ OP_OK = {"finishing", "semi_finishing", "roughing"}
+-_LATIN2CYR = str.maketrans("abcehkmoptxy", "авсенкмортху")
++_LATIN2CYR = str.maketrans("abcehkmoptxygd", "авсенкмортхугд")
+ _lock = threading.Lock()
+-_cache: Dict[str, Any] = {"mtime": 0.0, "rows": []}
++_cache: Dict[str, Any] = {"mtime": 0.0, "rows": [], "index": None, "exact": None}
+ 
+ 
+ def normalize(text: str) -> str:
+@@ -30,6 +43,8 @@
+     t = re.sub(r"\bвелдон", "weldon", t)
+     t = re.sub(r"\bбт(?=\d)", "вт", t)
+     t = t.translate(_LATIN2CYR)
++    # визуальные двойники -> одна форма: «ГС4325» == «GC4325», «СNMG» == «CNMG»
++    t = homoglyph_latin(t)
+     t = re.sub(r"[^\w\-]+", " ", t, flags=re.U)
+     return re.sub(r"\s+", " ", t).strip()
+ 
+@@ -38,6 +53,25 @@
+     return [w for w in normalize(text).split() if len(w) > 1]
+ 
+ 
++def _build_index(rows: List[Dict[str, str]]) -> Dict[str, Any]:
++    """TF-IDF векторы примеров: один раз на версию файла, а не на каждый запрос."""
++    docs = [_tokenize(r["query"]) for r in rows]
++    df: Dict[str, int] = {}
++    for toks in docs:
++        for t in set(toks):
++            df[t] = df.get(t, 0) + 1
++    n = len(rows)
++    vecs = []
++    for toks in docs:
++        tf: Dict[str, int] = {}
++        for t in toks:
++            tf[t] = tf.get(t, 0) + 1
++        v = {t: c * (math.log(n / df[t]) + 1.0) for t, c in tf.items()}
++        norm = math.sqrt(sum(x * x for x in v.values())) or 1.0
++        vecs.append({t: x / norm for t, x in v.items()})
++    return {"df": df, "vecs": vecs, "n": n}
++
++
+ def _read() -> List[Dict[str, str]]:
+     try:
+         mt = os.path.getmtime(PATH)
+@@ -51,9 +85,10 @@
+             for r in csv.DictReader(f, delimiter=";"):
+                 if (r.get("query") or "").strip():
+                     rows.append({k: (r.get(k) or "") for k in FIELDS})
+-    except Exception:
++    except Exception as e:
++        logger.warning("Таблица обучения %s не читается (%s); примеры не применяются", PATH, e)
+         rows = []
+-    _cache.update(mtime=mt, rows=rows)
++    _cache.update(mtime=mt, rows=rows, index=None, exact=None)
+     return rows
+ 
+ 
+@@ -67,7 +102,7 @@
+         _cache["mtime"] = os.path.getmtime(PATH)
+     except OSError:
+         pass
+-    _cache["rows"] = rows
++    _cache.update(rows=rows, index=None, exact=None)
+ 
+ 
+ def list_examples(limit: int = 300) -> List[Dict[str, str]]:
+@@ -92,7 +127,7 @@
+     correct_radius: str = "",
+     *args,
+     **kwargs,
+-) -> Dict[str, str]:
++) -> Optional[Dict[str, str]]:
+     iso = (correct_iso or "").strip().upper()
+     op = (correct_operation or "").strip().lower()
+     op = {"medium": "semi_finishing"}.get(op, op)
+@@ -118,6 +153,9 @@
+         "status": "new",
+         "rules_added": "",
+     }
++    # нечему учиться — не засоряем таблицу (валидация живёт здесь, а не в app.py)
++    if not any(entry[k] for k in CORRECTION_FIELDS):
++        return None
+     with _lock:
+         rows = list(_read())
+         rows = [r for r in rows if r["query_norm"] != entry["query_norm"]]
+@@ -137,79 +175,77 @@
+         return True
+ 
+ 
+-def lookup(query: str) -> Optional[Dict[str, str]]:
++def _exact_match(query: str) -> Optional[Dict[str, str]]:
++    """Точно тот же запрос (после нормализации), что и в примере технолога. O(1) по кэшу."""
+     if os.environ.get("TRAINING_DISABLE") == "1":
+         return None
+-    with _lock:
+-        rows = [
+-            r for r in _read()
+-            if r.get("status") != "rejected"
+-            and any(r.get(k) for k in ("correct_iso", "correct_operation", "correct_skus", "correct_shape", "correct_size", "correct_radius"))
+-        ]
+-    if not rows:
++    q_norm = normalize(query)
++    if not q_norm:
+         return None
++    with _lock:
++        rows = _read()
++        exact = _cache.get("exact")
++        if exact is None:
++            exact = {}
++            for r in rows:
++                if r.get("status") != "rejected":
++                    exact.setdefault(normalize(r.get("query") or ""), r)
++            _cache["exact"] = exact
++    return exact.get(q_norm)
+ 
+-    q_norm = normalize(query)
+-    for r in rows:
+-        if normalize(r.get("query") or "") == q_norm:
+-            return r
+ 
++def _vector_search(query: str) -> Optional[Dict[str, str]]:
++    """Похожий запрос по TF-IDF / cosine similarity среди примеров с поправками."""
++    if os.environ.get("TRAINING_DISABLE") == "1":
++        return None
+     q_tokens = _tokenize(query)
+     if not q_tokens:
+         return None
++    with _lock:
++        rows = [r for r in _read()
++                if r.get("status") != "rejected" and any(r.get(k) for k in TRAIN_FIELDS)]
++        index = _cache.get("index")
++        if index is None:
++            # индекс строится по тому же отфильтрованному списку, по которому идёт оценка
++            index = _build_index(rows)
++            _cache["index"] = index
++    if not rows:
++        return None
++    df, vecs, total_docs = index["df"], index["vecs"], index["n"]
++    tf: Dict[str, int] = {}
++    for t in q_tokens:
++        tf[t] = tf.get(t, 0) + 1
++    q_vec: Dict[str, float] = {}
++    norm_sq = 0.0
++    for t, c in tf.items():
++        val = c * (math.log(total_docs / df.get(t, 1)) + 1.0)
++        q_vec[t] = val
++        norm_sq += val * val
++    norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
++    q_vec = {k: w / norm for k, w in q_vec.items()}
+ 
+-    doc_tokens_list = [_tokenize(r["query"]) for r in rows]
+-    total_docs = len(rows)
+-    df: Dict[str, int] = {}
+-    for toks in doc_tokens_list:
+-        for t in set(toks):
+-            df[t] = df.get(t, 0) + 1
+-
+-    def get_vector(toks: List[str]) -> Dict[str, float]:
+-        v: Dict[str, int] = {}
+-        for t in toks:
+-            v[t] = v.get(t, 0) + 1
+-        norm_sq = 0.0
+-        res: Dict[str, float] = {}
+-        for t, tf in v.items():
+-            idf = math.log(total_docs / df.get(t, 1)) + 1.0
+-            val = tf * idf
+-            res[t] = val
+-            norm_sq += val * val
+-        norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
+-        return {k: w / norm for k, w in res.items()}
+-
+-    q_vec = get_vector(q_tokens)
+     best_match = None
+     best_score = 0.0
+-
+     for idx, r in enumerate(rows):
+-        d_vec = get_vector(doc_tokens_list[idx])
++        d_vec = vecs[idx]
+         score = sum(q_vec[t] * d_vec[t] for t in q_vec if t in d_vec)
+         if score > best_score:
+             best_score = score
+             best_match = r
+ 
+-    if best_match and best_score >= 0.35:
++    if best_match and best_score >= SIM_THRESHOLD:
+         return best_match
+     return None
+ 
+ 
++def lookup(query: str) -> Optional[Dict[str, str]]:
++    """Сначала точное совпадение запроса, затем векторный поиск похожего."""
++    return _exact_match(query) or _vector_search(query)
++
++
+ def lookup_exact(query: str) -> Optional[Dict[str, str]]:
+     """Точно тот же запрос, что и в примере технолога: только для него ответ считаем эталонным."""
+-    if os.environ.get("TRAINING_DISABLE") == "1":
+-        return None
+-    q_norm = normalize(query)
+-    if not q_norm:
+-        return None
+-    with _lock:
+-        rows = list(_read())
+-    for r in rows:
+-        if r.get("status") == "rejected":
+-            continue
+-        if normalize(r.get("query") or "") == q_norm:
+-            return r
+-    return None
++    return _exact_match(query)
+ 
+ 
+ def split_skus(value: str) -> List[str]:
+--- a/src/catalog_search.py
++++ b/src/catalog_search.py
+@@ -15,6 +15,7 @@
+ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+ 
+ from src import rates
++from src.materials_mapping import detect_iso_group
+ from src.code_normalize import cyrillic_code_letters, homoglyph_latin, layout_to_latin
+ from src.iso5608 import parse_holder_code
+ from src.site_catalog import _RE_DIA, _RE_MM, _dims, extract_common, extract_teeth, extract_thread
+@@ -41,7 +42,9 @@
+     for pattern, iso in _MATERIAL_ISO:
+         if re.search(pattern, low):
+             return iso
+-    return None
++    # правила технолога (data/materials.csv) и справочник (materials_iso.csv):
++    # иначе кнопка «добавить правила материалов» в админке не влияет на поиск по сайту
++    return detect_iso_group(low) or None
+ 
+ 
+ def operation_from_text(text: str) -> Optional[str]:
+@@ -1014,6 +1017,9 @@
+             attrs = it.get("attrs")
+             if not attrs:
+                 attrs = it["attrs"] = {}
++            # ключи для ответа технолога (pin): один раз при загрузке, а не на каждый запрос
++            it["_pin_name"] = homoglyph_latin(compact(str(it.get("name") or "")))
++            it["_pin_sku"] = homoglyph_latin(compact(str(it.get("sku") or "")))
+             iso = str(attrs.get("iso_code") or "").strip().upper()
+             if len(iso) >= 4:
+                 prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
+@@ -1450,7 +1456,9 @@
+ 
+     # ---- основной поиск --------------------------------------------------------------------------
+     def search(self, text: str, limit: int = 8, in_stock_only: bool = True,
+-               pin_names: Optional[Sequence[str]] = None) -> Dict[str, Any]:
++               pin_names: Optional[Sequence[str]] = None,
++               attr_overrides: Optional[Dict[str, Any]] = None,
++               overrides_replace: bool = False) -> Dict[str, Any]:
+         q = Query(text, self._insert_prefixes)
+         if q.insert_code:
+             q.insert_code = self._canonical_insert_code(q.insert_code)
+@@ -1458,6 +1466,14 @@
+             fixed = self._canonical_insert_code(q.compat_insert)
+             if fixed != q.compat_insert:
+                 q._set_compat(fixed)
++        if attr_overrides:
++            # поправки технолога из таблицы обучения: точное совпадение запроса — заменяем
++            # атрибуты парсера, похожий запрос (TF-IDF) — только заполняем недостающие
++            for k, v in attr_overrides.items():
++                if v in (None, ""):
++                    continue
++                if overrides_replace or q.attrs.get(k) in (None, ""):
++                    q.attrs[k] = v
+         if pin_names:
+             pinned = self._search_pinned(q, pin_names, limit, in_stock_only)
+             if pinned:
+@@ -1554,8 +1570,8 @@
+     @staticmethod
+     def _pinned_match(value: Any, want: str) -> bool:
+         """Артикул из ответа технолога совпадает с началом названия/артикула позиции."""
+-        v = compact(str(value or ""))
+-        w = compact(str(want or ""))
++        v = homoglyph_latin(compact(str(value or "")))
++        w = homoglyph_latin(compact(str(want or "")))
+         if not v or not w:
+             return False
+         if v == w:
+@@ -1567,13 +1583,16 @@
+                        in_stock_only: bool) -> Optional[Dict[str, Any]]:
+         """Ответ технолога из таблицы обучения: показываем именно названные позиции."""
+         pool, seen = [], set()
++        wants = [homoglyph_latin(compact(str(n or ""))) for n in names]
++        wants = [w for w in wants if w]
+         for fam_pool in self.by_family.values():
+             for it in fam_pool:
+                 key = it.get("id") or id(it)
+                 if key in seen:
+                     continue
+-                if any(self._pinned_match(it.get("name"), n) or self._pinned_match(it.get("sku"), n)
+-                       for n in names):
++                v_name, v_sku = it.get("_pin_name", ""), it.get("_pin_sku", "")
++                if any(v == w or (v.startswith(w) and not v[len(w):len(w) + 1].isdigit())
++                       for w in wants for v in (v_name, v_sku) if v):
+                     pool.append(it)
+                     seen.add(key)
+         if not pool:
+--- a/src/engine.py
++++ b/src/engine.py
+@@ -30,7 +30,7 @@
+ )
+ from src import iso1832, rates, training
+ from src.analogs_engine import AnalogsEngine
+-from src.catalog_search import CatalogSearchEngine
++from src.catalog_search import CatalogSearchEngine, material_iso, operation_from_text
+ from src.clarification_advisor import ClarificationAdvisor
+ from src.hybrid_search import HybridSearchEngine
+ from src.llm_client import LLMClient
+@@ -653,12 +653,12 @@
+     # ------------------------------------------------------------------------------------------
+     # Основной вход: внутренний парсер отвечает всегда; LLM лишь проверяет параметры (src/reviewer.py)
+     # ------------------------------------------------------------------------------------------
+-    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool) -> Dict[str, Any]:
++    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool, force_local: bool = False) -> Dict[str, Any]:
+         """Несколько позиций в одном запросе: каждая ищется отдельно, ответ объединяется."""
+         texts, all_prods, steps, first = [], [], [], None
+         seen = set()
+         for i, pos in enumerate(positions, 1):
+-            r = self.process_query_autonomous(pos["text"], allow_review=allow_review)
++            r = self.process_query_autonomous(pos["text"], allow_review=allow_review, force_local=force_local)
+             if first is None:
+                 first = r
+             qty = f" — {pos['qty']} шт" if pos.get("qty") else ""
+@@ -679,8 +679,8 @@
+         allow_review = False
+         positions = iso1832.split_positions(user_query)
+         if len(positions) > 1:
+-            return self._process_multi(positions, allow_review)
+-        res = self.process_query_autonomous(user_query, allow_review=allow_review)
++            return self._process_multi(positions, allow_review, force_local=force_local)
++        res = self.process_query_autonomous(user_query, allow_review=allow_review, force_local=force_local)
+         res["provider"] = "site_catalog"
+         res["model"] = "deterministic-catalog"
+         res.setdefault("llm_status", "not_needed")
+@@ -835,25 +835,66 @@
+     # ------------------------------------------------------------------------------------------
+     # Каталог сайта qtool.ru: ответ по всем группам (без LLM)
+     # ------------------------------------------------------------------------------------------
++    _TRAIN_ATTR_MAP = (
++        ("correct_iso", "iso_group"), ("correct_operation", "operation"),
++        ("correct_shape", "plate_shape"), ("correct_size", "plate_size"),
++    )
++
+     def _site_answer(self, user_query: str, site: CatalogSearchEngine) -> Dict[str, Any]:
+-        # Точный пример технолога из таблицы обучения: показываем названные им позиции
+-        example = training.lookup_exact(user_query)
+-        pins = training.split_skus(example.get("correct_skus") or "") if example else []
+-        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None)
++        # Пример технолога действует и в маршруте каталога сайта:
++        # точное совпадение запроса — пины артикулов + замена атрибутов парсера,
++        # похожий запрос (TF-IDF) — только заполнение недостающих атрибутов.
++        exact = training.lookup_exact(user_query)
++        example = exact or training.lookup(user_query)
++        pins = training.split_skus(exact.get("correct_skus") or "") if exact else []
++        overrides: Dict[str, Any] = {}
++        if example:
++            for src_key, dst_key in self._TRAIN_ATTR_MAP:
++                if example.get(src_key):
++                    overrides[dst_key] = example[src_key]
++            if example.get("correct_radius"):
++                try:
++                    overrides["corner_radius_mm"] = float(example["correct_radius"])
++                except ValueError:
++                    pass
++            if not exact:
++                # похожий запрос: явно названный в запросе материал/обработка важнее примера,
++                # но совпадающее значение оставляем (для запросов без группы парсер его не извлекает)
++                mi = material_iso(user_query)
++                if mi and mi != overrides.get("iso_group"):
++                    overrides.pop("iso_group", None)
++                op = operation_from_text(user_query)
++                if op and op != overrides.get("operation"):
++                    overrides.pop("operation", None)
++        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None,
++                          attr_overrides=overrides or None, overrides_replace=bool(exact))
+         if not res.get("products"):
+             self._log_unrecognized(user_query)
+         attrs = res.get("parsed") or {}
+         parsed = {
+             "iso": attrs.get("iso_group") or "", "operation": attrs.get("operation") or "",
+-            "shape": attrs.get("insert_shape") or "", "size": attrs.get("size_code") or "",
++            "shape": attrs.get("insert_shape") or attrs.get("plate_shape") or "",
++            "size": attrs.get("size_code") or attrs.get("plate_size") or "",
+             "code": res.get("insert_code") or attrs.get("iso_code") or "",
+             "radius": attrs.get("corner_radius_mm"),
+         }
++        text = self._format_site_response(res)
++        if example and (overrides or pins):
++            bits = []
++            if example.get("correct_iso"):
++                bits.append(f"ISO {example['correct_iso']}")
++            if example.get("correct_operation"):
++                bits.append(self._OP_NAMES.get(example["correct_operation"], example["correct_operation"]))
++            note = f"> 📚 Применён пример технолога №{example['id']}" + (": " + ", ".join(bits) if bits else "")
++            if example.get("comment"):
++                note += f". {example['comment']}"
++            text = note + "\n\n" + text
++            res["trained_example"] = example["id"]
+         return {
+             "mode": "site_catalog", "decision": "site_search", "tool_called": "catalog_search",
+             "tool_result": res,
+             "tool_steps": [{"step": 1, "function": "catalog_search", "arguments": {"query": user_query}, "result": res}],
+-            "response_text": self._format_site_response(res), "parsed": parsed,
++            "response_text": text, "parsed": parsed,
+             "llm_checked": False, "llm_status": "not_needed",
+         }
+ 
+@@ -989,7 +1030,7 @@
+                 lines.append(f"{i}. {tip}")
+         return "\n".join(lines).strip()
+ 
+-    def process_query_autonomous(self, user_query: str, allow_review: bool = False) -> Dict[str, Any]:
++    def process_query_autonomous(self, user_query: str, allow_review: bool = False, force_local: bool = False) -> Dict[str, Any]:
+         self._current_user_query = user_query
+         lower = user_query.lower()
+         completeness = self.clarification_advisor.analyze_query_completeness(user_query)
+@@ -1008,7 +1049,7 @@
+ 
+         # 2. Каталог сайта qtool.ru (/upload): все группы одним детерминированным поиском,
+         # включая подбор совместимого инструмента («державка под пластину CNMG»).
+-        site = self.get_site_engine()
++        site = None if force_local else self.get_site_engine()
+         if site is not None:
+             return self._site_answer(user_query, site)
+ 
+--- a/src/site_catalog.py
++++ b/src/site_catalog.py
+@@ -26,6 +26,11 @@
+ DATA_DIR = os.environ.get("ADVISOR_DATA_DIR", "data")
+ UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+ SITE_CSV = os.path.join(DATA_DIR, "catalog_site.csv")
++# минимальная доля прежнего объёма каталога для принятия нового снимка (защита от битых выгрузок)
++try:
++    SNAPSHOT_MIN_RATIO = min(1.0, max(0.0, float(os.environ.get("QTOOL_SNAPSHOT_MIN_RATIO", "0.8"))))
++except ValueError:
++    SNAPSHOT_MIN_RATIO = 0.8
+ MANIFEST = os.path.join(DATA_DIR, "site_manifest.json")
+ URLS_JSON = os.path.join(DATA_DIR, "site_urls.json")
+ 
+@@ -970,8 +975,8 @@
+     prev_total = int(prev.get("total") or 0)
+     total = len(merged)
+     warnings = []
+-    if prev_total and total < prev_total * 0.8:
+-        raise ValueError(f"Отклонение объёма каталога: было {prev_total}, стало {total} (< 80%). Снимок не подменён.")
++    if prev_total and total < prev_total * SNAPSHOT_MIN_RATIO:
++        raise ValueError(f"Отклонение объёма каталога: было {prev_total}, стало {total} (< {SNAPSHOT_MIN_RATIO:.0%}). Снимок не подменён.")
+     if UNKNOWN_SECTIONS:
+         warnings.append("Неизвестные разделы отправлены в карантин: " + "; ".join(UNKNOWN_SECTIONS[:10]))
+ 
+--- a/app.py
++++ b/app.py
+@@ -424,9 +424,7 @@
+                 ex = training.add_example(q, str(body.get("correct_iso", "")), str(body.get("correct_operation", "")),
+                                           str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed,
+                                           str(body.get("correct_shape", "")), str(body.get("correct_size", "")), str(body.get("correct_radius", "")))
+-                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]
+-                        or ex["correct_shape"] or ex["correct_size"] or ex["correct_radius"]):
+-                    training.delete_example(ex["id"])
++                if ex is None:
+                     return self._json({"ok": False, "message": "Заполните хотя бы одно поле: группу ISO, вид обработки, геометрию, размер, радиус, артикулы или комментарий"})
+                 suggested = training.suggest_tokens(q) if ex["correct_iso"] and ex["correct_iso"] != (parsed.get("iso") or "") else []
+                 return self._json({"ok": True, "id": ex["id"], "suggested": suggested, "iso": ex["correct_iso"],
+@@ -439,7 +437,7 @@
+                 return self._json({"ok": n > 0, "message": f"Добавлено правил материалов: {n}" if n else "Правила не добавлены (уже есть или не выбраны)"})
+             if action == "train_test":
+                 q = str(body.get("query", "")).strip()[:MAX_QUERY_LEN]
+-                res = engine.process_query(q, force_local=True)
++                res = engine.process_query(q)  # боевой маршрут (каталог сайта + обучение), а не запасной парсер
+                 return self._json({"ok": True, "message": "Готово", "parsed": res.get("parsed"), "response_text": res.get("response_text", ""),
+                                    "decision": res.get("decision")})
+             if action == "source":
+--- /dev/null
++++ b/tests/test_training_site.py
+@@ -0,0 +1,185 @@
++"""Обучение технолога должно действовать в боевом маршруте (каталог сайта), а не только в запасном."""
++import os
++import tempfile
++import threading
++import unittest
++import unittest.mock
++
++from src import training
++from src.catalog_search import CatalogSearchEngine, material_iso
++from src.engine import ToolAdvisorEngine
++from src import materials_mapping
++
++
++def item(family, category, name, sku=None, stock=10, price=1000.0, brand="TestBrand", **attrs):
++    return {"id": sku or name, "sku": sku or name, "name": name, "brand": brand,
++            "family": family, "category": category, "section": "", "subsection": "",
++            "stock": stock, "price": price, "currency": "RUB", "price_on_request": False,
++            "active": True, "url": "https://qtool.ru/item/" + (sku or name), "attrs": attrs}
++
++
++ITEMS = [
++    item("insert", "turning_insert", "CNMG 120408 PM 4325", sku="CNMG120408",
++         iso_code="CNMG120408", insert_shape="C", size_code=12, corner_radius_mm=0.8,
++         chipbreaker="PM", iso_group="P", operation="semi_finishing", grade="4325"),
++    item("insert", "turning_insert", "CNMG 120408 PM H1", sku="CNMG120408H1",
++         iso_code="CNMG120408", insert_shape="C", size_code=12, corner_radius_mm=0.8,
++         chipbreaker="PM", iso_group="H", operation="finishing", grade="H1"),
++    item("accessory", "tool_holder", "Патрон BT40-SL20-10 Weldon", sku="BT40-SL20-10",
++         standard="BT40", clamp_mm=20.0),
++    item("accessory", "tool_holder", "Патрон BT40-SL20-90 Weldon", sku="BT40-SL20-90",
++         standard="BT40", clamp_mm=20.0),
++]
++
++
++class TrainingSiteRoute(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self._old_path = training.PATH
++        training.PATH = os.path.join(self.tmp.name, "training_examples.csv")
++        training._cache.update(mtime=0.0, rows=[], index=None, exact=None)
++        self.site = CatalogSearchEngine([dict(it, attrs=dict(it["attrs"])) for it in ITEMS])
++        self.eng = object.__new__(ToolAdvisorEngine)   # лёгкий стенд без загрузки прайсов
++        self.eng._tls = threading.local()
++
++    def tearDown(self):
++        training.PATH = self._old_path
++        training._cache.update(mtime=0.0, rows=[], index=None, exact=None)
++        self.tmp.cleanup()
++
++    def test_exact_example_overrides_iso(self):
++        training.add_example("ТВЧ металл", correct_iso="H")
++        res = self.eng._site_answer("ТВЧ металл", self.site)
++        self.assertEqual(res["parsed"]["iso"], "H")
++        self.assertIn("Применён пример технолога", res["response_text"])
++        self.assertEqual(res["tool_result"].get("trained_example"), "1")
++
++    def test_fuzzy_example_fills_missing_iso(self):
++        training.add_example("ТВЧ металл", correct_iso="H")
++        res = self.eng._site_answer("твч металл обработка", self.site)
++        self.assertEqual(res["parsed"]["iso"], "H")
++
++    def test_fuzzy_does_not_replace_parsed_iso(self):
++        training.add_example("ТВЧ металл", correct_iso="H")
++        res = self.eng._site_answer("пластина твч чугун", self.site)  # парсер сам нашёл K
++        self.assertEqual(res["parsed"]["iso"], "K")
++
++    def test_fuzzy_respects_explicit_material_word(self):
++        training.add_example("ТВЧ металл", correct_iso="H")
++        res = self.eng._site_answer("твч металл чугун", self.site)  # группа не задана, но чугун назван явно
++        self.assertNotEqual(res["parsed"]["iso"], "H")
++
++    def test_exact_pins_skus(self):
++        training.add_example("патрон bt40 weldon 20", correct_skus="BT40-SL20-10; BT40-SL20-90")
++        res = self.eng._site_answer("патрон bt40 weldon 20", self.site)
++        skus = [p["sku"] for p in res["tool_result"]["products"]]
++        self.assertEqual(skus[:2], ["BT40-SL20-10", "BT40-SL20-90"])
++
++    def test_homoglyph_query_matches_exact(self):
++        training.add_example("CNMG 120408", correct_iso="H")
++        res = self.eng._site_answer("СNMG 120408", self.site)  # кириллическая С
++        self.assertEqual(res["parsed"]["iso"], "H")
++
++    def test_empty_example_is_not_saved(self):
++        self.assertIsNone(training.add_example("пустой запрос без поправок"))
++        self.assertEqual(training.count(), 0)
++
++    def test_rejected_row_does_not_shift_vectors(self):
++        # индекс TF-IDF должен строиться по отфильтрованному списку, иначе векторы съезжают
++        training.add_example("патрон bt40 weldon 20", correct_skus="BT40-SL20-10")
++        training.add_example("ТВЧ металл", correct_iso="H")
++        rows = training._read()
++        rows[0]["status"] = "rejected"
++        training._write(rows)
++        res = self.eng._site_answer("твч металл обработка", self.site)
++        self.assertEqual(res["parsed"]["iso"], "H")
++
++    def test_shape_size_radius_corrections(self):
++        training.add_example("пластина ромб чистовая", correct_shape="C", correct_size="12",
++                             correct_radius="0.8", correct_operation="finishing")
++        res = self.eng._site_answer("пластина ромб чистовая", self.site)
++        self.assertEqual(res["parsed"]["shape"], "C")
++        self.assertEqual(res["parsed"]["operation"], "finishing")
++
++
++class MaterialRulesSiteRoute(unittest.TestCase):
++    def test_technolog_rule_reaches_site_search(self):
++        tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(tmp.cleanup)
++        path = os.path.join(tmp.name, "materials.csv")
++        with open(path, "w", encoding="utf-8-sig") as f:
++            f.write('pattern,iso,note\n"твч","H","правило технолога"\n')
++        old = materials_mapping._MATERIALS_FILES
++        materials_mapping._MATERIALS_FILES = [path]
++        materials_mapping.reload_material_rules()
++        try:
++            self.assertEqual(material_iso("твч металл"), "H")
++        finally:
++            materials_mapping._MATERIALS_FILES = old
++            materials_mapping.reload_material_rules()
++
++
++class TrainingEndToEnd(unittest.TestCase):
++    """Сквозной сценарий: пример через HTTP API админки -> поисковый запрос через HTTP API."""
++
++    @classmethod
++    def setUpClass(cls):
++        import http.server
++        import app
++        cls.app = app
++        if app.engine is None:
++            app.build_engine()
++
++        class QuietHandler(app.AdvisorHTTPHandler):
++            def log_message(self, *a):
++                pass
++
++        cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
++        cls.port = cls.server.server_address[1]
++        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
++        cls.thread.start()
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.server.shutdown()
++        cls.server.server_close()
++
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self._old_path = training.PATH
++        training.PATH = os.path.join(self.tmp.name, "training_examples.csv")
++        training._cache.update(mtime=0.0, rows=[], index=None, exact=None)
++        self._unrec = unittest.mock.patch.object(self.app.engine, "_log_unrecognized", lambda q: None)
++        self._unrec.start()
++
++    def tearDown(self):
++        self._unrec.stop()
++        training.PATH = self._old_path
++        training._cache.update(mtime=0.0, rows=[], index=None, exact=None)
++        self.tmp.cleanup()
++
++    def _post(self, path, payload):
++        import json
++        import urllib.request
++        req = urllib.request.Request(
++            f"http://127.0.0.1:{self.port}{path}",
++            data=json.dumps(payload).encode("utf-8"),
++            headers={"Content-Type": "application/json"}, method="POST")
++        with urllib.request.urlopen(req, timeout=30) as r:
++            return json.loads(r.read().decode("utf-8"))
++
++    def test_train_then_search(self):
++        r = self._post("/api/admin/train_add", {"query": "ТВЧ металл", "correct_iso": "H"})
++        self.assertTrue(r["ok"], r)
++        res = self._post("/api/query", {"query": "ТВЧ металл"})
++        self.assertIn("Применён пример технолога", res["response_text"])
++        self.assertEqual((res.get("parsed") or {}).get("iso"), "H")
++
++    def test_empty_train_add_rejected_without_write(self):
++        r = self._post("/api/admin/train_add", {"query": "что-нибудь"})
++        self.assertFalse(r["ok"])
++        self.assertEqual(training.count(), 0)
++
++
++if __name__ == "__main__":
++    unittest.main()

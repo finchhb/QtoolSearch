@@ -32,7 +32,8 @@ load_env_file()  # .env читаем ДО остальных модулей: о�
 
 from src import training  # noqa: E402
 from src.catalog_search import is_self_contained_query  # noqa: E402
-from src.engine import ToolAdvisorEngine  # noqa: E402
+from src.engine import ToolAdvisorEngine
+from src import training  # noqa: E402
 from src.materials_mapping import detect_iso_group  # noqa: E402
 from src.ui import ADMIN_HTML, CHAT_HTML  # noqa: E402
 
@@ -424,9 +425,7 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
                 ex = training.add_example(q, str(body.get("correct_iso", "")), str(body.get("correct_operation", "")),
                                           str(body.get("correct_skus", "")), str(body.get("comment", "")), parsed,
                                           str(body.get("correct_shape", "")), str(body.get("correct_size", "")), str(body.get("correct_radius", "")))
-                if not (ex["correct_iso"] or ex["correct_operation"] or ex["correct_skus"] or ex["comment"]
-                        or ex["correct_shape"] or ex["correct_size"] or ex["correct_radius"]):
-                    training.delete_example(ex["id"])
+                if ex is None:
                     return self._json({"ok": False, "message": "Заполните хотя бы одно поле: группу ISO, вид обработки, геометрию, размер, радиус, артикулы или комментарий"})
                 suggested = training.suggest_tokens(q) if ex["correct_iso"] and ex["correct_iso"] != (parsed.get("iso") or "") else []
                 return self._json({"ok": True, "id": ex["id"], "suggested": suggested, "iso": ex["correct_iso"],
@@ -439,7 +438,7 @@ class AdvisorHTTPHandler(http.server.BaseHTTPRequestHandler):
                 return self._json({"ok": n > 0, "message": f"Добавлено правил материалов: {n}" if n else "Правила не добавлены (уже есть или не выбраны)"})
             if action == "train_test":
                 q = str(body.get("query", "")).strip()[:MAX_QUERY_LEN]
-                res = engine.process_query(q, force_local=True)
+                res = engine.process_query(q)  # боевой маршрут (каталог сайта + обучение), а не запасной парсер
                 return self._json({"ok": True, "message": "Готово", "parsed": res.get("parsed"), "response_text": res.get("response_text", ""),
                                    "decision": res.get("decision")})
             if action == "source":
