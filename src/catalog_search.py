@@ -381,6 +381,7 @@ CATEGORY_HINTS = {
         ("machine_tap", r"машинн|метрич|сквозн|гаечн"),
     ],
     "holder": [
+        ("mini_tool", r"минирезц"),
         ("holder_internal", r"расточн|борштанг|внутренн"),
         ("holder_grooving", r"канавочн|канавк|отрезн"),
         ("holder_threading", r"резьбов"),
@@ -397,6 +398,7 @@ CATEGORY_HINTS = {
 }
 
 CATEGORY_TITLES = {
+    "mini_tool": "минирезец",
     "holder_internal": "расточная",
     "holder_external": "наружная",
     "holder_grooving": "канавочная",
@@ -782,7 +784,13 @@ class Query:
         if r:
             self.attrs["radius_mm"] = float(r.group(1).replace(",", "."))
 
-        m = re.search(r"(?:хв\.?\s*|хвост[а-яё]*\s*)(\d{1,3}(?:[.,]\d+)?)(?!\d)", low)
+        w = re.search(r"канавк[а-яё]*\s*[-–:]?\s*(\d+(?:[.,]\d+)?)\s*(?:мм)?", low)
+        if w:
+            val = float(w.group(1).replace(",", "."))
+            if 0.1 <= val <= 10:
+                self.attrs["width_mm"] = val
+
+        m = re.search(r"(?:хв\.?\s*|хвост[а-яё]*\s*)(?:минирезц[а-яё]*\s*[-–:]?\s*)?(\d{1,3}(?:[.,]\d+)?)(?!\d)", low)
         if not m:
             # «под 20 хвостовик»: размер стоит перед словом, а не после
             m = re.search(r"\bпод\s+(\d{1,3}(?:[.,]\d+)?)\s*(?:мм\s*)?(?:хв\.?|хвост[а-яё]*)", low)
@@ -1151,6 +1159,24 @@ class CatalogSearchEngine:
             # ключи для ответа технолога (pin): один раз при загрузке, а не на каждый запрос
             it["_pin_name"] = homoglyph_latin(compact(str(it.get("name") or "")))
             it["_pin_sku"] = homoglyph_latin(compact(str(it.get("sku") or "")))
+            # технолог может назвать позицию ID сайта (Битрикс) или кодом 1С - матчим и их
+            it["_pin_id"] = homoglyph_latin(compact(str(it.get("id") or "")))
+            it["_pin_code1c"] = homoglyph_latin(compact(str(it.get("code_1c") or "")))
+            if it.get("category") == "mini_tool":
+                # размеры минирезцов зашиты в имени: MFR 4 B0.5 L10 -> хвост 4, канавка 0.5, длина 10
+                nm = str(it.get("name") or "")
+                ms = re.match(r"\s*[A-Z]{2,4}[- ](\d{1,2})(?=[- ])", nm)
+                if ms and not attrs.get("shank_diameter_mm"):
+                    attrs["shank_diameter_mm"] = float(ms.group(1))
+                mw = re.search(r"\bB(\d+(?:\.\d+)?)", nm)
+                if mw and not attrs.get("width_mm"):
+                    attrs["width_mm"] = float(mw.group(1))
+                mr = re.search(r"\bR(\d+(?:\.\d+)?)", nm)
+                if mr and not attrs.get("corner_radius_mm"):
+                    attrs["corner_radius_mm"] = float(mr.group(1))
+                ml = re.search(r"\bL(\d{1,3})\b", nm)
+                if ml and not attrs.get("length_mm"):
+                    attrs["length_mm"] = float(ml.group(1))
             iso = str(attrs.get("iso_code") or "").strip().upper()
             if len(iso) >= 4:
                 prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
@@ -1426,6 +1452,9 @@ class CatalogSearchEngine:
                     # «хвост 16», S20: круглый хвостовик, сравниваем диаметр
                     out.append(("диаметр хвоста", True, lambda it: self._near(
                         it["attrs"].get("shank_diameter_mm"), a["shank_mm"], 0.5)))
+            if a.get("width_mm") and "mini_tool" in q.category_hints:
+                out.append(("ширина канавки", False, lambda it: self._near(
+                    it["attrs"].get("width_mm"), a["width_mm"], 0.01)))
         elif fam == "countersink":
             if a.get("diameter_mm"):
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], 0.2)))
@@ -1767,9 +1796,10 @@ class CatalogSearchEngine:
                 key = it.get("id") or id(it)
                 if key in seen:
                     continue
-                v_name, v_sku = it.get("_pin_name", ""), it.get("_pin_sku", "")
+                vals = (it.get("_pin_name", ""), it.get("_pin_sku", ""),
+                        it.get("_pin_id", ""), it.get("_pin_code1c", ""))
                 if any(v == w or (v.startswith(w) and not v[len(w):len(w) + 1].isdigit())
-                       for w in wants for v in (v_name, v_sku) if v):
+                       for w in wants for v in vals if v):
                     pool.append(it)
                     seen.add(key)
         if not pool:
@@ -1797,7 +1827,8 @@ class CatalogSearchEngine:
                 continue
             have.add(key)
             added.append(p)
-        cards = (cards + added)[:limit]
+        # названные технологом позиции показываем целиком, обычная выдача - только остаток лимита
+        cards = cards + added[:max(0, limit - len(cards))]
         out = {
             "query": q.text, "family": fam, "groups": [],
             "products": cards,

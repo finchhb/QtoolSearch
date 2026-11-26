@@ -1,0 +1,53 @@
+--- a/src/catalog_search.py
++++ b/src/catalog_search.py
+@@ -1153,2 +1153,5 @@
+             it["_pin_sku"] = homoglyph_latin(compact(str(it.get("sku") or "")))
++            # технолог может назвать позицию ID сайта (Битрикс) или кодом 1С - матчим и их
++            it["_pin_id"] = homoglyph_latin(compact(str(it.get("id") or "")))
++            it["_pin_code1c"] = homoglyph_latin(compact(str(it.get("code_1c") or "")))
+             iso = str(attrs.get("iso_code") or "").strip().upper()
+@@ -1769,5 +1772,6 @@
+                     continue
+-                v_name, v_sku = it.get("_pin_name", ""), it.get("_pin_sku", "")
++                vals = (it.get("_pin_name", ""), it.get("_pin_sku", ""),
++                        it.get("_pin_id", ""), it.get("_pin_code1c", ""))
+                 if any(v == w or (v.startswith(w) and not v[len(w):len(w) + 1].isdigit())
+-                       for w in wants for v in (v_name, v_sku) if v):
++                       for w in wants for v in vals if v):
+                     pool.append(it)
+@@ -1799,3 +1803,4 @@
+             added.append(p)
+-        cards = (cards + added)[:limit]
++        # названные технологом позиции показываем целиком, обычная выдача - только остаток лимита
++        cards = cards + added[:max(0, limit - len(cards))]
+         out = {
+
+--- a/src/engine.py
++++ b/src/engine.py
+@@ -890,2 +890,4 @@
+                 note += f". {example['comment']}"
++            if pins and not res.get("trained"):
++                note += f" Внимание: названные артикулы ({len(pins)} шт.) в каталоге не найдены - показан обычный подбор."
+             text = note + "\n\n" + text
+
+--- a/tests/test_training_site.py
++++ b/tests/test_training_site.py
+@@ -96,2 +96,18 @@
+ 
++    def test_pins_by_site_id(self):
++        # технолог называет позиции ID сайта (Битрикс), а не артикулом - пины должны находиться
++        it = item("holder", "mini_tool", "MIR 6 A60 L22 резьбовой минирезец DESKAR",
++                  sku="MIR 6 A60 L22 резьбовой минирезец DESKAR", shank_mm=6.0)
++        it["id"] = "65880"
++        site = CatalogSearchEngine([dict(it, attrs=dict(it["attrs"]))])
++        training.add_example("минирезец резьбовой хвостовик 6", correct_skus="65880")
++        res = self.eng._site_answer("минирезец резьбовой хвостовик 6", site)
++        self.assertTrue(res["tool_result"].get("trained"))
++        self.assertEqual(res["tool_result"]["products"][0]["sku"], "MIR 6 A60 L22 резьбовой минирезец DESKAR")
++
++    def test_missing_pins_warning(self):
++        training.add_example("минирезец резьбовой хвостовик 6", correct_skus="999999999")
++        res = self.eng._site_answer("минирезец резьбовой хвостовик 6", self.site)
++        self.assertIn("не найдены", res["response_text"])
++
+     def test_shape_size_radius_corrections(self):

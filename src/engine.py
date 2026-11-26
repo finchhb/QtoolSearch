@@ -879,6 +879,10 @@ class ToolAdvisorEngine:
             "radius": attrs.get("corner_radius_mm"),
         }
         text = self._format_site_response(res)
+        if example and not (overrides or pins) and exact and example.get("comment"):
+            # пример только с комментарием: показываем его, но подбор он не меняет
+            text = f"> 📚 Комментарий технолога (пример №{example['id']}): {example['comment']}\n\n" + text
+            res["trained_example"] = example["id"]
         if example and (overrides or pins):
             bits = []
             if example.get("correct_iso"):
@@ -888,6 +892,8 @@ class ToolAdvisorEngine:
             note = f"> 📚 Применён пример технолога №{example['id']}" + (": " + ", ".join(bits) if bits else "")
             if example.get("comment"):
                 note += f". {example['comment']}"
+            if pins and not res.get("trained"):
+                note += f" Внимание: названные артикулы ({len(pins)} шт.) в каталоге не найдены - показан обычный подбор."
             text = note + "\n\n" + text
             res["trained_example"] = example["id"]
         return {

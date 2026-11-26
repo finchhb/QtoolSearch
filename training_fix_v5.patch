@@ -1,0 +1,84 @@
+--- a/src/catalog_search.py
++++ b/src/catalog_search.py
+@@ -383,2 +383,3 @@
+     "holder": [
++        ("mini_tool", r"минирезц"),
+         ("holder_internal", r"расточн|борштанг|внутренн"),
+@@ -399,2 +400,3 @@
+ CATEGORY_TITLES = {
++    "mini_tool": "минирезец",
+     "holder_internal": "расточная",
+@@ -784,3 +786,9 @@
+ 
+-        m = re.search(r"(?:хв\.?\s*|хвост[а-яё]*\s*)(\d{1,3}(?:[.,]\d+)?)(?!\d)", low)
++        w = re.search(r"канавк[а-яё]*\s*[-–:]?\s*(\d+(?:[.,]\d+)?)\s*(?:мм)?", low)
++        if w:
++            val = float(w.group(1).replace(",", "."))
++            if 0.1 <= val <= 10:
++                self.attrs["width_mm"] = val
++
++        m = re.search(r"(?:хв\.?\s*|хвост[а-яё]*\s*)(?:минирезц[а-яё]*\s*[-–:]?\s*)?(\d{1,3}(?:[.,]\d+)?)(?!\d)", low)
+         if not m:
+@@ -1156,2 +1164,17 @@
+             it["_pin_code1c"] = homoglyph_latin(compact(str(it.get("code_1c") or "")))
++            if it.get("category") == "mini_tool":
++                # размеры минирезцов зашиты в имени: MFR 4 B0.5 L10 -> хвост 4, канавка 0.5, длина 10
++                nm = str(it.get("name") or "")
++                ms = re.match(r"\s*[A-Z]{2,4}[- ](\d{1,2})(?=[- ])", nm)
++                if ms and not attrs.get("shank_diameter_mm"):
++                    attrs["shank_diameter_mm"] = float(ms.group(1))
++                mw = re.search(r"\bB(\d+(?:\.\d+)?)", nm)
++                if mw and not attrs.get("width_mm"):
++                    attrs["width_mm"] = float(mw.group(1))
++                mr = re.search(r"\bR(\d+(?:\.\d+)?)", nm)
++                if mr and not attrs.get("corner_radius_mm"):
++                    attrs["corner_radius_mm"] = float(mr.group(1))
++                ml = re.search(r"\bL(\d{1,3})\b", nm)
++                if ml and not attrs.get("length_mm"):
++                    attrs["length_mm"] = float(ml.group(1))
+             iso = str(attrs.get("iso_code") or "").strip().upper()
+@@ -1431,2 +1454,5 @@
+                         it["attrs"].get("shank_diameter_mm"), a["shank_mm"], 0.5)))
++            if a.get("width_mm") and "mini_tool" in q.category_hints:
++                out.append(("ширина канавки", False, lambda it: self._near(
++                    it["attrs"].get("width_mm"), a["width_mm"], 0.01)))
+         elif fam == "countersink":
+
+--- a/src/engine.py
++++ b/src/engine.py
+@@ -881,2 +881,6 @@
+         text = self._format_site_response(res)
++        if example and not (overrides or pins) and exact and example.get("comment"):
++            # пример только с комментарием: показываем его, но подбор он не меняет
++            text = f"> 📚 Комментарий технолога (пример №{example['id']}): {example['comment']}\n\n" + text
++            res["trained_example"] = example["id"]
+         if example and (overrides or pins):
+
+--- a/tests/test_training_site.py
++++ b/tests/test_training_site.py
+@@ -112,2 +112,7 @@
+ 
++    def test_comment_only_example_shown(self):
++        training.add_example("минирезец для прямых торцевых канавок", comment="минирезцы - раздел каталога")
++        res = self.eng._site_answer("минирезец для прямых торцевых канавок", self.site)
++        self.assertIn("Комментарий технолога", res["response_text"])
++
+     def test_shape_size_radius_corrections(self):
+@@ -119,2 +124,17 @@
+ 
++
++class MiniToolRouting(unittest.TestCase):
++    def test_minirezec_category_and_sizes(self):
++        items = [
++            item("holder", "mini_tool", "MFR 4 B0.5 L10 торцевой минирезец для прямых канавок DESKAR", sku="MFR4B05L10"),
++            item("holder", "mini_tool", "MFR 4 B2.0 L15 торцевой минирезец для прямых канавок DESKAR", sku="MFR4B20L15"),
++            item("holder", "holder_grooving", "MGEHR2525-2C отрезная державка DESKAR", sku="MGEHR2525-2C"),
++        ]
++        site = CatalogSearchEngine(items)
++        res = site.search("минирезец для прямых торцевых канавок. канавка - 0,5мм. хвостовик минирезца - 4мм")
++        skus = [p["sku"] for p in res["products"]]
++        self.assertIn("MFR4B05L10", skus)
++        self.assertNotIn("MGEHR2525-2C", skus)
++        self.assertNotIn("MFR4B20L15", skus)
++
+ 

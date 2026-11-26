@@ -94,12 +94,48 @@ class TrainingSiteRoute(unittest.TestCase):
         res = self.eng._site_answer("твч металл обработка", self.site)
         self.assertEqual(res["parsed"]["iso"], "H")
 
+    def test_pins_by_site_id(self):
+        # технолог называет позиции ID сайта (Битрикс), а не артикулом - пины должны находиться
+        it = item("holder", "mini_tool", "MIR 6 A60 L22 резьбовой минирезец DESKAR",
+                  sku="MIR 6 A60 L22 резьбовой минирезец DESKAR", shank_mm=6.0)
+        it["id"] = "65880"
+        site = CatalogSearchEngine([dict(it, attrs=dict(it["attrs"]))])
+        training.add_example("минирезец резьбовой хвостовик 6", correct_skus="65880")
+        res = self.eng._site_answer("минирезец резьбовой хвостовик 6", site)
+        self.assertTrue(res["tool_result"].get("trained"))
+        self.assertEqual(res["tool_result"]["products"][0]["sku"], "MIR 6 A60 L22 резьбовой минирезец DESKAR")
+
+    def test_missing_pins_warning(self):
+        training.add_example("минирезец резьбовой хвостовик 6", correct_skus="999999999")
+        res = self.eng._site_answer("минирезец резьбовой хвостовик 6", self.site)
+        self.assertIn("не найдены", res["response_text"])
+
+    def test_comment_only_example_shown(self):
+        training.add_example("минирезец для прямых торцевых канавок", comment="минирезцы - раздел каталога")
+        res = self.eng._site_answer("минирезец для прямых торцевых канавок", self.site)
+        self.assertIn("Комментарий технолога", res["response_text"])
+
     def test_shape_size_radius_corrections(self):
         training.add_example("пластина ромб чистовая", correct_shape="C", correct_size="12",
                              correct_radius="0.8", correct_operation="finishing")
         res = self.eng._site_answer("пластина ромб чистовая", self.site)
         self.assertEqual(res["parsed"]["shape"], "C")
         self.assertEqual(res["parsed"]["operation"], "finishing")
+
+
+class MiniToolRouting(unittest.TestCase):
+    def test_minirezec_category_and_sizes(self):
+        items = [
+            item("holder", "mini_tool", "MFR 4 B0.5 L10 торцевой минирезец для прямых канавок DESKAR", sku="MFR4B05L10"),
+            item("holder", "mini_tool", "MFR 4 B2.0 L15 торцевой минирезец для прямых канавок DESKAR", sku="MFR4B20L15"),
+            item("holder", "holder_grooving", "MGEHR2525-2C отрезная державка DESKAR", sku="MGEHR2525-2C"),
+        ]
+        site = CatalogSearchEngine(items)
+        res = site.search("минирезец для прямых торцевых канавок. канавка - 0,5мм. хвостовик минирезца - 4мм")
+        skus = [p["sku"] for p in res["products"]]
+        self.assertIn("MFR4B05L10", skus)
+        self.assertNotIn("MGEHR2525-2C", skus)
+        self.assertNotIn("MFR4B20L15", skus)
 
 
 class MaterialRulesSiteRoute(unittest.TestCase):
