@@ -10,6 +10,8 @@ import time
 import urllib.request
 from typing import Dict, Optional
 
+from src.site_catalog import _ssl_context
+
 RATES_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
 RATES_PATH = os.path.join("data", "rates.json")
 MAX_AGE_SEC = 12 * 3600
@@ -40,7 +42,7 @@ def _load_cache() -> None:
 
 def refresh(timeout: int = 10) -> bool:
     try:
-        with urllib.request.urlopen(urllib.request.Request(RATES_URL, headers={"User-Agent": "tool-advisor"}), timeout=timeout) as r:
+        with urllib.request.urlopen(urllib.request.Request(RATES_URL, headers={"User-Agent": "tool-advisor"}), timeout=timeout, context=_ssl_context()) as r:
             payload = json.loads(r.read().decode("utf-8"))
         rates = parse_cbr_json(payload)
         if not rates.get("USD"):

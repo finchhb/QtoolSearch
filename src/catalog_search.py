@@ -11,18 +11,22 @@ src/catalog_search.py - детерминированный поиск по ка�
 4. Ранжирование: уровень совпадения, наличие, цена, бренд, число совпавших атрибутов.
 """
 import math
+import os
 import re
+from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from src import rates
 from src.code_normalize import cyrillic_code_letters, homoglyph_latin, layout_to_latin
 from src.iso5608 import parse_holder_code
-from src.site_catalog import _RE_DIA, _RE_MM, _dims, extract_common, extract_teeth, extract_thread
+from src.materials_mapping import detect_iso_group as _detect_iso_group_mapping
+from src.site_catalog import _RE_DIA, _RE_MM, SITE_CSV, _dims, extract_common, extract_teeth, extract_thread
 
 # --------------------------------------------------------------------------------------------------
 # Нормализация
 # --------------------------------------------------------------------------------------------------
 _WORD_RE = re.compile(r"[a-zа-я0-9]+(?:[.,/][a-zа-я0-9]+)*")
+_COMPACT_RE = re.compile(r"[^a-z0-9а-я]")
 
 # Материал обработки -> группа ISO (порядок важен: «жаропрочная сталь» — это S, «12Х18Н10Т» — M)
 _MATERIAL_ISO = [
@@ -41,7 +45,9 @@ def material_iso(text: str) -> Optional[str]:
     for pattern, iso in _MATERIAL_ISO:
         if re.search(pattern, low):
             return iso
-    return None
+    # Fallback: CSV-based rules from materials_mapping (handles grades like 11Х11Н2В2МФ -> M)
+    iso = _detect_iso_group_mapping(text)
+    return iso or None
 
 
 def operation_from_text(text: str) -> Optional[str]:
@@ -53,7 +59,7 @@ def operation_from_text(text: str) -> Optional[str]:
 
 
 def compact(s: str) -> str:
-    return re.sub(r"[^a-z0-9а-я]", "", (s or "").lower())
+    return _COMPACT_RE.sub("", (s or "").lower())
 
 
 def fmt_num(value: Any) -> str:
@@ -63,10 +69,16 @@ def fmt_num(value: Any) -> str:
     return str(value)
 
 
-def query_variants(q: str) -> List[str]:
-    """Варианты написания кода: как есть, омоглифы, неверная раскладка, кириллица по буквам кода."""
+def query_variants(q: str, include_layout: bool = True) -> List[str]:
+    """Варианты написания кода: как есть, омоглифы, неверная раскладка, кириллица по буквам кода.
+
+    include_layout=False исключает вариант неверной раскладки (layout_to_latin),
+    чтобы русские слова без цифр не склеивались в ложные коды (B2).
+    """
     base = (q or "").lower().replace("ё", "е")
-    out = [base, homoglyph_latin(base), cyrillic_code_letters(base), layout_to_latin(base)]
+    out = [base, homoglyph_latin(base), cyrillic_code_letters(base)]
+    if include_layout:
+        out.append(layout_to_latin(base))
     seen, uniq = set(), []
     for v in out:
         if v not in seen:
@@ -81,7 +93,11 @@ def tokenize(text: str) -> List[str]:
 
 def _fix_digit_letters(s: str) -> str:
     s = re.sub(r"(?<=\d)[OОQ](?=\d)", "0", s)
-    return re.sub(r"(?<=\d)[lI|](?=\d)", "1", s)
+    s = re.sub(r"(?<=\d)[lI|](?=\d)", "1", s)
+    s = re.sub(r"(?<=\d)B(?=\d)", "8", s)
+    # B в конце цифровой последовательности (CNMG12040B -> CNMG120408),
+    # но не после полного 6-значного кода (CNMG120408B — B это стружколом)
+    return re.sub(r"(?<!\d)(\d{4,5})B$", r"\g<1>8", s)
 
 
 _HOLDER_PREFIXES = {
@@ -187,9 +203,12 @@ def insert_prefix_from_word(raw: str, known: Iterable[str] = ()) -> Optional[str
     return None
 
 
-def insert_code_from_text(text: str) -> Optional[str]:
-    """CNMG 12 04 08 / CNMG120408 -> CNMG120408. Хвост из букв (стружколом) не приклеиваем."""
-    src = cyrillic_code_letters((text or "").lower().replace("ё", "е")).upper()
+def _extract_insert_code(src: str) -> Optional[str]:
+    """Извлечь код пластины из уже нормализованной строки (все токены верхний регистр).
+
+    Возвращает первый подходящий код, не проверяя префикс против каталога —
+    проверку префикса выполняет вызывающий (insert_code_from_text).
+    """
     toks = re.findall(r"[A-Z0-9]+", _fix_digit_letters(src))
     for i, tok in enumerate(toks):
         if re.fullmatch(r"[A-Z]{2,5}\d{4,6}[A-Z]{0,4}", tok):
@@ -197,6 +216,14 @@ def insert_code_from_text(text: str) -> Optional[str]:
             if tok[0] in _INSERT_SHAPES and not parse_holder_code(tok):
                 return tok
             continue
+        # «CNMG120408PM4325»: длинный склеенный токен код+марка/стружколом —
+        # отрезаем известный префикс + 4-6 цифр, остаток — марка (не часть кода).
+        m = re.match(r"^([A-Z]{2,5})(\d{4,6})([A-Z0-9]+)$", tok)
+        if m and m.group(1)[0] in _INSERT_SHAPES and not parse_holder_code(tok):
+            pref, digits = m.group(1), m.group(2)
+            code = pref + digits
+            if not parse_holder_code(code):
+                return code
         if re.fullmatch(r"[A-Z]{2,5}", tok):
             if tok[0] not in _INSERT_SHAPES or tok[:4] in _HOLDER_PREFIXES:
                 continue  # не пластина (оснастка или транслитерированное слово)
@@ -211,6 +238,48 @@ def insert_code_from_text(text: str) -> Optional[str]:
                 code = tok + digits
                 if not parse_holder_code(code):
                     return code
+    return None
+
+
+def insert_code_from_text(text: str, known: Iterable[str] = ()) -> Optional[str]:
+    """CNMG 12 04 08 / CNMG120408 -> CNMG120408. Хвост из букв (стружколом) не приклеиваем.
+
+    Пробуем варианты нормализации в порядке приоритета:
+    омоглифы → неверная раскладка → как есть → побуквенная транслитерация.
+    Принимаем первый вариант, чей префикс есть в индексе кодов каталога (B1, B2).
+    Если ни один вариант не дал известный префикс — возвращаем первого кандидата
+    как fallback, чтобы _canonical_insert_code мог исправить опечатку префикса.
+    """
+    known_set = set(known) | _COMMON_INSERT_PREFIXES
+    text = (text or "").lower().replace("ё", "е")
+    # порядок: омоглифы (СТМН → CTMN) → неверная раскладка (стьп → CNMG)
+    # → как есть → побуквенная транслитерация (для полностью кириллических кодов: РПМТ → RPMT)
+    variants = [homoglyph_latin(text), layout_to_latin(text), text, cyrillic_code_letters(text)]
+    seen, ordered = set(), []
+    for v in variants:
+        v = v.upper()
+        if v not in seen:
+            seen.add(v)
+            ordered.append(v)
+    fallback = None
+    for src in ordered:
+        code = _extract_insert_code(src)
+        if code is None:
+            continue
+        if fallback is None:
+            fallback = code
+        # Принимаем только коды, чей 4-буквенный префикс есть в каталоге (B1).
+        # Неизвестные префиксы (например CTMN из стьп120408 через транслит)
+        # сохраняем как fallback для канонической коррекции.
+        if code[:4] in known_set:
+            return code
+    # B2: fallback возвращаем только если префикс похож на известный (Дамерау <= 2),
+    # иначе ложные коды из омоглифов державок (TK2525 из зсдтк2525м12) уводят в insert.
+    if fallback:
+        pref = fallback[:4]
+        for known_pref in known_set:
+            if known_pref[0] == pref[0] and damerau(pref, known_pref, 2) <= 2:
+                return fallback
     return None
 
 
@@ -303,6 +372,8 @@ CATEGORY_HINTS = {
         ("slot_mill", r"дисков|пазов|т-образн|отрезн"),
         ("burr", r"борфрез"),
         ("end_mill", r"концев|end"),
+        ("roughing", r"кукуруза|чернов"),
+        ("dovetail", r"ласточкин|dovetail"),
     ],
     "tap": [
         ("forming_tap", r"раскатн"),
@@ -338,7 +409,12 @@ CATEGORY_TITLES = {
 
 
 class Query:
-    def __init__(self, text: str, insert_prefixes: Optional[set] = None):
+    def __init__(
+        self,
+        text: str,
+        insert_prefixes: Optional[set] = None,
+        code_index: Optional[Dict[Tuple[str, str], List[int]]] = None,
+    ):
         self.text = (text or "").strip()
         self.low = _apply_aliases(self.text.lower().replace("ё", "е"))
         self.variants = query_variants(self.text)
@@ -365,6 +441,7 @@ class Query:
         self.holder_compat_requested = False
         self.shank_round = False
         self._insert_prefixes = insert_prefixes or set()
+        self._code_index = code_index
         self._parse()
 
     def _parse(self) -> None:
@@ -523,7 +600,7 @@ class Query:
         if self.family in (None, "insert"):
             # после «под <пластина>» код уже ушёл в совместимость: группа по нему не определяется
             for v in (query_variants(code_text) if under else self.variants):
-                code = insert_code_from_text(v)
+                code = insert_code_from_text(v, self._insert_prefixes)
                 if code and not compact(rev_holder or "").startswith(compact(code)):
                     self.insert_code = code
                     self.family = "insert"
@@ -551,15 +628,30 @@ class Query:
                 self.family = "insert"
                 break
         if self.family in (None, "holder"):
-            # без варианта «неверная раскладка»: русские слова превращаются в латинский
-            # набор, который иначе склеивается с сечением в ложный код державки
-            for v in query_variants(code_text)[:3]:
+            # все варианты нормализации: омоглифы → как есть → неверная раскладка → транслит.
+            # holder_code_from_text отсекает русские слова без цифр, поэтому ложные коды не появится (B2).
+            # B2: буква M (класс длины держателя) на русской раскладке — клавиша м, которую
+            # layout_to_latin переводит в v. Пробуем вернуть M, иначе державки в русской
+            # раскладке не найдутся (в каталоге коды с M, не с V).
+            variants = list(query_variants(code_text, include_layout=bool(re.search(r"\d", code_text))))
+            lv = layout_to_latin(code_text)
+            if any(ch in lv for ch in "vV"):
+                variants.append(lv.replace("v", "m").replace("V", "M"))
+            found = None
+            for v in variants:
                 code = holder_code_from_text(v)
                 if code:
-                    self.holder_code = code
-                    if self.family is None:
-                        self.family = "holder"
-                    break
+                    if found is None:
+                        found = code
+                    # предпочитаем код, который реально есть в каталоге держателей
+                    want = compact(code)
+                    if self._code_index is not None and ("holder", want) in self._code_index:
+                        found = code
+                        break
+            if found:
+                self.holder_code = found
+                if self.family is None:
+                    self.family = "holder"
 
         # «пластина под державку» без кода: подбирать не под что, просим код державки.
         if self.family == "insert" and not self.insert_code and _RE_HOLDER_MENTION.search(self.text):
@@ -572,9 +664,18 @@ class Query:
                 if self.insert_code and g.group(1) in self.insert_code:
                     continue
                 if not self.holder_compat_requested:
-                    self.attrs["grade"] = g.group(1)
+                    grade_raw = g.group(1)
+                    # «CNMG120408PM4325»: марка склеена с кодом — убираем буквенный префикс (PM4325 -> 4325)
+                    grade_clean = re.sub(r"^[A-Z]+", "", grade_raw)
+                    self.attrs["grade"] = grade_clean or grade_raw
                 break
             if "grade" not in self.attrs and self.insert_code:
+                # «CNMG120408PM4325»: марка склеена с кодом — извлечь хвост после кода
+                if up.startswith(self.insert_code):
+                    tail = up[len(self.insert_code):]
+                    m = re.match(r"^[A-Z]{1,3}(\d{3,4})$", tail)
+                    if m and not self.holder_compat_requested:
+                        self.attrs["grade"] = m.group(1)
                 # «DCGT 11T302 FL K10»: короткая марка вида K10
                 g2 = re.search(r"(?<![\w.])([A-Z]{1,2}\d{2})(?![\w.])", up)
                 if g2 and g2.group(1) not in self.insert_code:
@@ -590,13 +691,24 @@ class Query:
             if op:
                 self.attrs["operation"] = op
 
+        # B5: материал для drill/mill/tap — нержавейка→HSS-E/inox+ISO M, сталь→P,
+        # чугун→K, алюминий→N, титан→S.
+        if self.family in ("drill", "mill", "tap", "reamer") and "material" not in self.attrs:
+            mi = material_iso(low)
+            if mi:
+                self.attrs["iso_group"] = mi
+            mat_common = extract_common(low)
+            if mat_common.get("material"):
+                self.attrs["material"] = mat_common["material"]
+
         b = re.search(r"(?:бренд|марка|производител[ья])\s*[:—-]?\s*([a-zа-я0-9-]{2,20})", low)
         if b:
             self.brand = b.group(1)
 
         common = extract_common(low)
         # В коде державки «M16» - размер пластины, а не метрическая резьба.
-        thread = None if self.family == "holder" else extract_thread(self.text)
+        # Вставки (кроме резьбовых) не имеют резьбы G — не ловим G\d+ внутри кода пластины (B10).
+        thread = None if self.family in ("holder", "insert") else extract_thread(self.text)
         if thread:
             self.thread = thread.get("thread")
             for key in ("pitch_mm", "diameter_mm", "thread_type", "tap_kind"):
@@ -703,6 +815,20 @@ class Query:
                 self.attrs["shank_section"] = sec.group(0)
         if dims and self.family == "holder" and "shank_mm" not in self.attrs:
             self.attrs["shank_mm"] = dims[0]
+
+        if self.family == "holder" and "shank_mm" not in self.attrs:
+            # «державка расточная 16»: голое число — диаметр хвоста (круглый хвостовик).
+            # «державка 20»: сечение 20×20 (квадратный хвостовик наружной державки).
+            for m in re.finditer(r"(?<![\d.])\b(\d{1,3})(?!\d)", code_text):
+                val = int(m.group(1))
+                if 8 <= val <= 50:
+                    if "holder_internal" in self.category_hints or self.shank_round:
+                        self.attrs["shank_mm"] = float(val)
+                        self.shank_round = True
+                    else:
+                        self.attrs["shank_mm"] = float(val)
+                        self.attrs["shank_section"] = f"{val}×{val}"
+                    break
 
         m = re.search(r"(?:h8|h7|h9|h6)\b", low)
         if m and self.family == "reamer":
@@ -934,7 +1060,7 @@ def is_clarification(text: str, insert_prefixes: Optional[Iterable[str]] = None)
     )
     rest = _RE_UNDER_SIZE.sub(" под ", rest)
     rest = _RE_UNDER_PLATE.sub(" под ", rest)
-    code = insert_code_from_text(rest)
+    code = insert_code_from_text(rest, known)
     if code:
         return False  # полный код пластины («CNMG 120408») — самостоятельный запрос
     if holder_code_from_text(rest):
@@ -999,6 +1125,14 @@ class CatalogSearchEngine:
         self._vocab_by_len: Dict[int, List[str]] = {}
         self._corr_cache: Dict[str, Optional[str]] = {}
         self._insert_prefixes: Dict[str, int] = {}
+        # (family, compact_code) -> индексы позиций в self.items для быстрого точного поиска кода
+        self._by_family_and_code: Dict[Tuple[str, str], List[int]] = {}
+        # token -> set(item indices) — инвертированный индекс токенов (S5)
+        self._posting_lists: Dict[str, set] = {}
+        # LRU-кэш результатов поиска по нормализованному запросу (S5)
+        self._search_cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._cache_max_size = 256
+        self._catalog_mtime: float = 0.0
         if items:
             self.load(items)
 
@@ -1010,7 +1144,7 @@ class CatalogSearchEngine:
         df: Dict[str, int] = {}
         vocab = set()
         prefixes: Dict[str, int] = {}
-        for it in self.items:
+        for idx, it in enumerate(self.items):
             attrs = it.get("attrs")
             if not attrs:
                 attrs = it["attrs"] = {}
@@ -1058,11 +1192,25 @@ class CatalogSearchEngine:
             code_src = " ".join(str(x) for x in (it.get("sku"), attrs.get("iso_code"), attrs.get("holder_code")) if x)
             it["_code_compact"] = compact(code_src)
             it["_brand_norm"] = compact(it.get("brand", ""))
+            # предвычисленные compact-коды для быстрого точного поиска (S1, S2)
+            iso_c = compact(str(attrs.get("iso_code") or ""))
+            holder_c = compact(str(attrs.get("holder_code") or ""))
+            sku_c = compact(str(it.get("sku") or ""))
+            it["_iso_compact"] = iso_c
+            it["_holder_compact"] = holder_c
+            it["_sku_compact"] = sku_c
+            it["_dedupe_key"] = (it["_brand_norm"], sku_c or compact(it.get("name", "")))
+            fam = it["family"]
+            for code in {iso_c, holder_c, sku_c}:
+                if code and len(code) >= 4:
+                    self._by_family_and_code.setdefault((fam, code), []).append(idx)
             doc_tokens.append(toks)
             for t in toks:
                 df[t] = df.get(t, 0) + 1
                 if len(t) >= 4 and any(ch.isdigit() for ch in t):
                     vocab.add(t)
+                # S5: инвертированный индекс токенов — token -> set(item indices)
+                self._posting_lists.setdefault(t, set()).add(idx)
             self.by_family.setdefault(it["family"], []).append(it)
         self.df = df
         self.total = len(self.items)
@@ -1073,6 +1221,12 @@ class CatalogSearchEngine:
             by_len.setdefault(len(token), []).append(token)
         self._vocab_by_len = by_len
         self._corr_cache = {}
+        # инвалидируем кэш поиска при перезагрузке каталога
+        self._search_cache.clear()
+        try:
+            self._catalog_mtime = os.path.getmtime(SITE_CSV)
+        except OSError:
+            self._catalog_mtime = 0.0
 
     def reload(self, path: Optional[str] = None) -> int:
         from src.site_catalog import load_site_catalog
@@ -1219,6 +1373,18 @@ class CatalogSearchEngine:
             if a.get("diameter_mm"):
                 tol = 0.06 if a["diameter_mm"] < 10 else 0.11
                 out.append(("диаметр", True, lambda it: self._near(it["attrs"].get("diameter_mm"), a["diameter_mm"], tol)))
+            # B5: материал для свёрел/фрез/разверток — нержавейка→HSS-E/inox+ISO M, сталь→P, чугун→K, алюминий→N, титан→S
+            if a.get("material"):
+                want_mat = compact(str(a["material"]))
+                out.append(("материал", False, lambda it: (
+                    want_mat in compact(str(it["attrs"].get("material") or ""))
+                    or compact(str(it["attrs"].get("material") or "")) in want_mat
+                )))
+            if a.get("iso_group"):
+                out.append(("группа ISO", False, lambda it: (
+                    str((it["attrs"].get("iso_group") or "")).upper() == a["iso_group"].upper()
+                    or a["iso_group"].upper() in str(it["attrs"].get("secondary_iso") or "").upper()
+                )))
             if a.get("teeth"):
                 out.append(("зубья", False, lambda it: self._int_eq(it["attrs"].get("teeth"), a["teeth"])))
             if a.get("shank_mm"):
@@ -1451,7 +1617,7 @@ class CatalogSearchEngine:
     # ---- основной поиск --------------------------------------------------------------------------
     def search(self, text: str, limit: int = 8, in_stock_only: bool = True,
                pin_names: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-        q = Query(text, self._insert_prefixes)
+        q = Query(text, self._insert_prefixes, self._by_family_and_code)
         if q.insert_code:
             q.insert_code = self._canonical_insert_code(q.insert_code)
         if q.compat_insert:
@@ -1472,7 +1638,21 @@ class CatalogSearchEngine:
                 return self._compat_ask_code(q)
         if q.holder_compat_requested and not q.holder_compat:
             return self._holder_ask_code(q)
+        # B9: группа известна, но нет кода, параметров или категории — просим уточнить,
+        # не лить всю семью с уровнем «точное». compatible_insert — уже достаточно для подбора.
+        if q.family and not (q.insert_code or q.holder_code or q.attrs or q.category_hints or q.thread or q.compat_insert):
+            return self._ask_params(q)
         return self._search_family(q, q.family, limit, in_stock_only)
+
+    def _ask_params(self, q: Query) -> Dict[str, Any]:
+        """Группа известна, но нет кода/параметров — просим уточнить запрос."""
+        return {
+            "query": q.text, "family": q.family, "groups": [], "products": [],
+            "parsed": dict(q.attrs), "chips": self._chips(q, q.family),
+            "level": "уточните параметры", "total_found": 0, "relaxations": [],
+            "follow_ups": self._follow_ups(q, q.family, []),
+            "note": f"Укажите параметры для {FAMILY_TITLES.get(q.family, q.family)}: код, диаметр, размер и т.п.",
+        }
 
     def _compat_ask_code(self, q: Query) -> Dict[str, Any]:
         """«Фреза под пластину» без кода пластины: подбирать не под что, просим код."""
@@ -1617,6 +1797,16 @@ class CatalogSearchEngine:
         pool = self.by_family.get(fam, [])
         if not pool:
             pool = self._related_pool(fam)
+        # S2: сужаем пул через индекс кодов, когда задан точный код (O(совпадений) вместо линейного скана)
+        code_for_index = q.insert_code or q.holder_code
+        if code_for_index:
+            want = compact(code_for_index)
+            if want:
+                idxs = self._by_family_and_code.get((fam, want))
+                if idxs:
+                    indexed_pool = [self.items[i] for i in idxs]
+                    if indexed_pool:
+                        pool = indexed_pool
         filters = self._filters(q, fam)
         hard = [(n, f) for n, is_hard, f in filters if is_hard]
         soft = [(n, f) for n, is_hard, f in filters if not is_hard]
@@ -1657,6 +1847,29 @@ class CatalogSearchEngine:
                 if results:
                     break
 
+        # B3: fuzzy-код по цифровому хвосту (Дамерау <= 1) при нулевом точном совпадении
+        fuzzy_code = False
+        if not results and q.insert_code and fam == "insert":
+            want = compact(q.insert_code)
+            pref = want[:4]
+            digits = want[4:]
+            if len(digits) >= 4:
+                candidates = []
+                for (f, code), idxs in self._by_family_and_code.items():
+                    if f != fam or not code.startswith(pref):
+                        continue
+                    if abs(len(code) - len(want)) > 1:
+                        continue
+                    if damerau(digits, code[4:], 1) <= 1:
+                        for i in idxs:
+                            candidates.append(self.items[i])
+                if candidates:
+                    # мягкие фильтры без жёсткого кода (код уже неточный)
+                    results = self._collect(candidates, q, [], soft, in_stock_only, fam)
+                    if results:
+                        fuzzy_code = True
+                        relaxed.append(f"код не найден точно — ближайший по цифровому хвосту к {want}")
+
         code_level = 0
         if q.insert_code or q.holder_code:
             code_level = max((self._code_match(it, q.insert_code or q.holder_code or "")[0] for it, _ in results), default=0)
@@ -1667,7 +1880,9 @@ class CatalogSearchEngine:
                 results = nearest
 
         level = "точное"
-        if nearest:
+        if fuzzy_code:
+            level = "аналог"
+        elif nearest:
             level = "аналог"
         elif relaxed or 0 < code_level < 3:
             level = "частичное"
@@ -1758,9 +1973,16 @@ class CatalogSearchEngine:
                 continue
             seen.add(key)
             uniq.append((it, score))
-        # порядок в ответе: бренд по приоритету, внутри бренда — по остатку на складе
-        uniq.sort(key=lambda x: (_BRAND_RANK.get(x[0].get("_brand_norm") or "", len(_BRAND_RANK)),
-                                 -(x[0].get("stock") or 0), -x[1]))
+        # порядок в ответе: при точном коде — бренд по приоритету, иначе — по релевантности (score),
+        # бренд и остаток — только тай-брейки (B8).
+        has_exact = any(s >= 120 for _, s in uniq)
+        if has_exact:
+            uniq.sort(key=lambda x: (_BRAND_RANK.get(x[0].get("_brand_norm") or "", len(_BRAND_RANK)),
+                                     -(x[0].get("stock") or 0), -x[1]))
+        else:
+            # без точного кода — бренд по приоритету, затем остаток, затем score (B8)
+            uniq.sort(key=lambda x: (_BRAND_RANK.get(x[0].get("_brand_norm") or "", len(_BRAND_RANK)),
+                                     -(x[0].get("stock") or 0), -x[1]))
         return uniq
 
     def _nearest_diameter(self, pool, want: float, fam: str, q: Query, limit: int, guard=None):
@@ -1928,6 +2150,9 @@ class CatalogSearchEngine:
                     tips.append("Укажите диаметр хвоста (16, 20, 25 мм) или код державки.")
                 else:
                     tips.append("Укажите сечение державки (16х16, 20х20, 25х25) или её код.")
+            elif not products and self._round_shank(q):
+                # шанк распарсан, но подходящих державок не нашлось — предлагают уточнить диаметр
+                tips.append("Укажите диаметр хвоста (16, 20, 25 мм) или код державки.")
         elif fam == "insert":
             if not q.insert_code and not q.holder_compat and not (a.get("plate_shape") or a.get("plate_size")):
                 tips.append("Укажите код пластины (например CNMG 120408) или форму и размер.")

@@ -992,8 +992,6 @@ class ToolAdvisorEngine:
     def process_query_autonomous(self, user_query: str, allow_review: bool = False) -> Dict[str, Any]:
         self._current_user_query = user_query
         lower = user_query.lower()
-        completeness = self.clarification_advisor.analyze_query_completeness(user_query)
-        example = training.lookup(user_query)  # пример технолога для этого запроса (точное совпадение), если есть
         is_analog_request = any(w in lower for w in ["аналог", "замен", "кросс", "вместо", "эквивалент"])
 
         if is_analog_request:
@@ -1011,6 +1009,11 @@ class ToolAdvisorEngine:
         site = self.get_site_engine()
         if site is not None:
             return self._site_answer(user_query, site)
+
+        # B13: training.lookup + analyze_query_completeness нужны только для не-сайт ветки;
+        # на сайт-пути выше уже вернули результат — не тратим на них время.
+        completeness = self.clarification_advisor.analyze_query_completeness(user_query)
+        example = training.lookup(user_query)  # пример технолога для этого запроса (точное совпадение), если есть
 
         search_args = self._detect_search_args(user_query)
         parsed_orig = {"iso": search_args["iso_group"] or "", "operation": search_args["operation"] or ""}  # что определил парсер сам

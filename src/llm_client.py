@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.site_catalog import _ssl_context
+
 CONFIG_PATH = os.path.join("data", "llm_config.json")
 DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"
 DEFAULT_MODELS = "qwen2.5:3b"
@@ -141,7 +143,7 @@ class LLMClient:
         payload.update(self.extra_params)
         req = urllib.request.Request(self.base_url + "/chat/completions", data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             raise LLMError(f"{model}: HTTP {e.code} {e.read().decode('utf-8', errors='ignore')[:200]}", e.code) from e

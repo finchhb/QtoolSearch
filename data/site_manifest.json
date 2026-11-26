@@ -1,8 +1,588 @@
 {
- "built_at": "2026-11-13 12:34:59",
- "total": 26930,
- "prev_total": 26930,
+ "built_at": "2026-11-16 14:33:49",
+ "total": 50559,
+ "prev_total": 50559,
  "sources": [
+  {
+   "file": "10_prizhimy_i_prihvaty.xlsx",
+   "sha256": "81a064109eef60169172fdcd3bcef2af836c6b5924a25f6e9437fd83123965e1",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 28,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 28,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "94012b6a3e65"
+     }
+    }
+   ]
+  },
+  {
+   "file": "11_otreznye_lezviya_i_bloki.xlsx",
+   "sha256": "5db5b2ea21af927d459e7404efb30572463f269de572d84c790be3fe66f1d411",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 16,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 16,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "d276babae895"
+     }
+    }
+   ]
+  },
+  {
+   "file": "12_stoly_dlya_stankov.xlsx",
+   "sha256": "524cdc148b9e90967a9e92b0cacd007917a6cf2419aa116b09f6edba0a89f02d",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 28,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 28,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "3ec33137e277"
+     }
+    }
+   ]
+  },
+  {
+   "file": "13_vrashchayushchiesya_centry_dlya_tokarnyh_stankov.xlsx",
+   "sha256": "dec0a187af4a8e2e05366692b60fe135423097fe5c672c48294bc37982f3f5ab",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 31,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 31,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "8f03211ad0f0"
+     }
+    }
+   ]
+  },
+  {
+   "file": "14_rastochnye_sistemy.xlsx",
+   "sha256": "1678e4e0db1864ccd59dc90749276a9fc0018aae490fd672574e7fb1da45fea7",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 210,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 210,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "b92b1a425189"
+     }
+    }
+   ]
+  },
+  {
+   "file": "15_derzhateli_osevogo_instrumenta.xlsx",
+   "sha256": "0f721e52f35daa91f0b8005f6e60e74ce5296d7bf12817987f4baba9186f44fa",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 27,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 27,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "0c210143c15a"
+     }
+    }
+   ]
+  },
+  {
+   "file": "16_aksessuary_stanochnye.xlsx",
+   "sha256": "9424d36f6d547c6aaa5e1b804fe92be67b05277a69d9fa484825e468acd5ce84",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 299,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 299,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "4e39cce0c34c"
+     }
+    }
+   ]
+  },
+  {
+   "file": "1_rezbovye_plastiny.xlsx",
+   "sha256": "4e1df84a67de460adacb6c7ed59b5f9186a01f0aae5062ccbb50a50f120c87ea",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 2761,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 2761,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "3db65e288a48"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_10_smennye_plastiny_dlya_frez.xlsx",
+   "sha256": "ea701ca7a6a21a82b8b146e9f369c53027c6c072e4eccc2c4d1bcc6934f90d70",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 3420,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 3420,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "8dda5bb2534b"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_11_smennye_plastiny_dlya_sverl.xlsx",
+   "sha256": "4ddc58b601b6d5e5fefcdabb3356ea0155fc8618101420021be9e5ed300ce4f3",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 785,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 785,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "3659e8e34271"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_12_sverla_po_metallu.xlsx",
+   "sha256": "d14c06608de2bf39403d783b9155b0166c55ee65b4377cb9a66da0d4fd8f14f0",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 6189,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 6189,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "87235c2acfd5"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_13_zapasnye_chasti_dlya_derzhavok_i_frez.xlsx",
+   "sha256": "8cb2686fd1c08779e47e3d7a024bfad5a481a7776a998a20af96ddf39c3bf274",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 163,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 163,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "95c2170a6297"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_1_derzhavki_dlya_naruzhnogo_tocheniya.xlsx",
+   "sha256": "448f2656f34d38322a9b72322384e5c4e6c97cbef8ea635957fe2de692ace454",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 822,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 822,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "d6658545f023"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_2_derzhavki_dlya_obrabotki_vnutrennikh_kanavok.xlsx",
+   "sha256": "50a42cf770926913fc8251492ef4f3df5d92d3abbcfdc567740bf6467e2a0da3",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 54,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 54,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "2f4e4bf3cd25"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_3_derzhavki_dlya_vnutrennego_tocheniya.xlsx",
+   "sha256": "2806e150a5994d4bdba78e09dec76d3d20043d3607dd5ae25f04a73bcfd11b3c",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 897,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 897,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "64c62e8be134"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_4_frezy.xlsx",
+   "sha256": "1a7c9a3de9485342838d0b29eeb2c11e52125cc0b200d935da10da01f7f473fc",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 5278,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 5278,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "77d7ddf258af"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_5_Izmeritelnye_instrumenty.xlsx",
+   "sha256": "3985bbecfc58a86d4b1eff6b839cacd71c501318a0bf69543535991d541af920",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 2786,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 2786,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "a42b6ad0424e"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_6_metchiki.xlsx",
+   "sha256": "c3b8c5c91f18e2db736d6a9053ea0c29d097d8e1e46fa4a38b30af32dc2146a7",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 3805,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 3805,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "051ad07f4d96"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_7_minireztsy.xlsx",
+   "sha256": "5071842e1bbbd110a6fb0a312f5caf4360a69c94f3de7e7538ca5dda89b40eb3",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 654,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 654,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "9b59a779814f"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_8_plashki.xlsx",
+   "sha256": "8b2fd2bdb61074fbd16c4878e30b6f4ab9e4d3d59c80d0d9aaee3db52bdb98ab",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 639,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 639,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "5ac66e76ff14"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_9_plastiny_so_vstavkami_PCBNPCD.xlsx",
+   "sha256": "2d4945e726cc16ce517c909942c612be83912983f93ec570c153648ad0faae59",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 198,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 198,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "841a6b5bbb0f"
+     }
+    }
+   ]
+  },
+  {
+   "file": "2_otreznye_i_kanavochnye_plastiny.xlsx",
+   "sha256": "c7e032f1dfb16baae93ffd9bb155e964aff462e843cbb22d8434a2133f1413b0",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 3012,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 3012,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "38e4d3258aad"
+     }
+    }
+   ]
+  },
+  {
+   "file": "3_plastiny_dlya_frez.xlsx",
+   "sha256": "073c6335b4d701c37e4120ddedfbc8c765741a57b7648e2403d6d422fd0a1c6b",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 3420,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 3420,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "9c49143133ec"
+     }
+    }
+   ]
+  },
+  {
+   "file": "4_patrony.xlsx",
+   "sha256": "af8366281ab6684caa3103b6b9651fd73b014249b90c2891d4c8253a926341c5",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 597,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 597,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "f843c2b28bb7"
+     }
+    }
+   ]
+  },
+  {
+   "file": "5_cangi.xlsx",
+   "sha256": "e233d3be80d0f058011e76b268a24b84832346c5eb73efb4ee319aeb87e73be3",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 419,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 419,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "c7685705769f"
+     }
+    }
+   ]
+  },
+  {
+   "file": "6_vtulki_perehodnye.xlsx",
+   "sha256": "3b8d63a911ba6e690e87a40c92a0180e9a2a0672bd4b8ac15e94b2904a1cb921",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 104,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 104,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "17837cb9a6eb"
+     }
+    }
+   ]
+  },
+  {
+   "file": "7_kulachki.xlsx",
+   "sha256": "f37d27b0338318b1785565f6ea2fde8871fd7a1332d2b2d08a9742bfa8b3c885",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 94,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 94,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "0b9e063400c1"
+     }
+    }
+   ]
+  },
+  {
+   "file": "8_patrony.xlsx",
+   "sha256": "82cfbd8ae66367221556d9d81bf8ff7a5db39e8f98be10ffbe38f176553dd607",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 82,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 82,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "ac6656034a1b"
+     }
+    }
+   ]
+  },
+  {
+   "file": "9_tiski.xlsx",
+   "sha256": "1990c97be35e5ee540a3ac1b30758292d998895e50db94c82cff5b422bc5de97",
+   "sheets": [
+    "Лист 1"
+   ],
+   "row_count": 60,
+   "layouts": [
+    {
+     "layout": "bitrix",
+     "rows": 60,
+     "sheets": [
+      "Лист 1"
+     ],
+     "schema": {
+      "Лист 1": "b3effacd9e23"
+     }
+    }
+   ]
+  },
   {
    "file": "plates.xlsx",
    "sha256": "74d530c2df07b8bb13349b4fea42b039e1107dc6866df6b278815b04a1747f30",
@@ -42,63 +622,62 @@
   }
  ],
  "by_family": {
-  "insert": 18402,
-  "holder": 1299,
-  "drill": 2091,
-  "accessory": 1330,
-  "mill": 2167,
-  "countersink": 40,
-  "tap": 1457,
-  "die": 32,
+  "accessory": 4785,
+  "mill": 5297,
+  "holder": 2882,
+  "insert": 27008,
+  "drill": 6144,
+  "tap": 3662,
+  "die": 639,
+  "countersink": 30,
   "reamer": 112
  },
  "by_category": {
-  "turning_insert": 16691,
-  "holder_external": 355,
-  "holder_internal": 275,
+  "clamp_set": 28,
+  "slot_mill": 912,
+  "machine": 121,
+  "holder_internal": 1107,
+  "tool_holder": 43,
+  "grinding_wheel": 28,
+  "accessory": 30,
+  "collet": 489,
+  "coolant": 199,
+  "threading_insert": 2894,
+  "milling_insert": 3425,
+  "drill_insert": 828,
+  "hss_drill": 1660,
+  "center_drill": 182,
+  "solid_carbide_drill": 2046,
+  "indexable_drill_body": 2069,
+  "drill_head": 48,
+  "crown_drill": 139,
+  "spare_part": 175,
+  "holder_external": 830,
+  "holder_grooving": 197,
+  "end_mill": 2605,
+  "ball_mill": 214,
+  "radius_mill": 288,
+  "burr": 366,
+  "face_mill": 644,
+  "thread_mill": 265,
+  "measuring": 2766,
+  "hand_tool": 23,
+  "machine_tap": 3662,
+  "mini_tool": 654,
+  "threading_die": 639,
+  "turning_insert": 16849,
+  "grooving_insert": 3012,
+  "chuck": 624,
+  "adapter": 105,
+  "machine_jaw": 94,
+  "machine_vice": 60,
   "holder_mini": 23,
-  "holder_grooving": 166,
-  "hss_drill": 264,
   "holder_threading": 71,
-  "spare_part": 37,
-  "end_mill": 1457,
   "countersink": 6,
-  "measuring": 80,
-  "deburring_blade": 34,
-  "machine_tap": 1388,
-  "forming_tap": 36,
-  "pipe_tap": 33,
-  "mini_tool": 409,
-  "accessory": 374,
-  "adapter": 30,
-  "coolant": 99,
-  "collet": 346,
-  "grinding_wheel": 27,
-  "center": 27,
-  "tool_holder": 25,
-  "machine_jaw": 83,
-  "chuck": 110,
-  "machine_vice": 42,
+  "deburring_blade": 24,
   "saw_blade": 3,
-  "threading_die": 32,
   "machine_reamer": 54,
-  "hand_reamer": 58,
-  "hand_tool": 15,
-  "crown_drill": 71,
-  "drill_head": 153,
-  "drill_body": 48,
-  "indexable_drill_body": 1158,
-  "center_drill": 81,
-  "solid_carbide_drill": 316,
-  "machine": 35,
-  "grooving_insert": 596,
-  "milling_insert": 503,
-  "drill_insert": 147,
-  "threading_insert": 465,
-  "slot_mill": 253,
-  "radius_mill": 214,
-  "ball_mill": 135,
-  "face_mill": 105
+  "hand_reamer": 58
  },
  "unknown_sections": [],
  "warnings": []

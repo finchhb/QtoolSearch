@@ -137,7 +137,7 @@ def build_engine() -> ToolAdvisorEngine:
             return
         first = True
         while True:
-            if SYNC_HOURS > 0 or (first and not PUBLIC):
+            if first or SYNC_HOURS > 0:
                 try:
                     ok, msg, _ = engine.sync_all()
                     print(f"[Автообновление обеих таблиц] {msg}" if ok else f"[Автообновление обеих таблиц] не удалось: {msg}")

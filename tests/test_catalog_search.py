@@ -1020,5 +1020,104 @@ class PilotSelftestTest(unittest.TestCase):
         self.assertEqual(res["total_found"], 1)
 
 
+class AuditBugfixTest(unittest.TestCase):
+    """Этап 5: кейсы на раскладку, цифровые опечатки, склейку, сленг, материал, глухое отверстие."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = CatalogSearchEngine(ITEMS + [
+            # сленг: кукуруза -> черновая фреза, ласточкин хвост -> dovetail
+            item("mill", "roughing", "Фреза концевая кукуруза 16 мм 4F черновая",
+                 sku="ROUGH16", diameter_mm=16.0, teeth=4),
+            item("mill", "dovetail", "Фреза ласточкин хвост 16 мм 60 град",
+                 sku="DOVE16", diameter_mm=16.0, angle_deg=60.0),
+            # материал для drill: нержавейка -> HSS-E
+            item("drill", "hss_drill", "Сверло HSS-E 8,5 мм по нержавейке",
+                 sku="HSS-E85", diameter_mm=8.5, material="HSS-E", iso_group="M"),
+            # глухое отверстие: метчик М6 спиральный
+            item("tap", "machine_tap", "Метчик машинный M6x1 спиральный для глухих отверстий",
+                 sku="TAP-M6-BLIND", thread="M6x1", pitch_mm=1.0, diameter_mm=6.0,
+                 tap_kind="blind", material="HSS-E"),
+        ])
+
+    def test_layout_insert_code(self):
+        # B1: стьп120408 (русская раскладка CNMG120408)
+        res = self.engine.search("стьп120408")
+        self.assertEqual(res["family"], "insert")
+        self.assertEqual(res["insert_code"], "CNMG120408")
+        self.assertEqual(res["products"][0]["sku"], "CNMG120408")
+
+    def test_layout_holder_code(self):
+        # B2: зсдтк2525м12 (русская раскладка PCLNR2525M12)
+        q = Query("зсдтк2525м12")
+        self.assertEqual(q.family, "holder")
+        self.assertIsNotNone(q.holder_code)
+        self.assertIsNone(q.insert_code)
+
+    def test_digit_typo_B_to_8(self):
+        # B3: CNMG12040B -> CNMG120408 (B->8 в конце цифр)
+        res = self.engine.search("CNMG12040B")
+        self.assertEqual(res["family"], "insert")
+        self.assertEqual(res["products"][0]["sku"], "CNMG120408")
+
+    def test_digit_typo_missing_digit(self):
+        # B3: CNMG12048 -> ближайший CNMG120408 (пропущена цифра)
+        res = self.engine.search("CNMG12048")
+        self.assertEqual(res["family"], "insert")
+        self.assertTrue(res["products"])
+        self.assertEqual(res["products"][0]["sku"], "CNMG120408")
+        self.assertIn(res["level"], ("аналог", "точное"))
+
+    def test_concatenated_code_and_grade(self):
+        # B4: CNMG120408PM4325 -> код CNMG120408 + марка 4325
+        q = Query("CNMG120408PM4325")
+        self.assertEqual(q.insert_code, "CNMG120408")
+        self.assertEqual(q.attrs.get("grade"), "4325")
+        res = self.engine.search("CNMG120408PM4325")
+        self.assertEqual(res["products"][0]["sku"], "CNMG120408")
+
+    def test_slang_corn_mill(self):
+        # B6: кукуруза -> черновая фреза
+        res = self.engine.search("фреза кукуруза 16")
+        self.assertEqual(res["family"], "mill")
+        self.assertIn("ROUGH16", {p["sku"] for p in res["products"]})
+
+    def test_slang_dovetail_mill(self):
+        # B6: ласточкин хвост -> dovetail
+        res = self.engine.search("фреза ласточкин хвост 16")
+        self.assertEqual(res["family"], "mill")
+        self.assertIn("DOVE16", {p["sku"] for p in res["products"]})
+
+    def test_drill_material_stainless(self):
+        # B5: сверло по нержавейке -> ISO M / HSS-E
+        q = Query("сверло по нержавейке 8.5")
+        self.assertEqual(q.family, "drill")
+        self.assertEqual(q.attrs.get("iso_group"), "M")
+        res = self.engine.search("сверло по нержавейке 8.5")
+        self.assertIn("HSS-E85", {p["sku"] for p in res["products"]})
+
+    def test_blind_hole_tap(self):
+        # B12: метчик под глухое отверстие м6 -> tap_kind blind
+        q = Query("метчик под глухое отверстие м6")
+        self.assertEqual(q.family, "tap")
+        self.assertEqual(q.thread, "M6")
+        self.assertEqual(q.attrs.get("tap_kind"), "blind")
+        res = self.engine.search("метчик под глухое отверстие м6")
+        self.assertIn("TAP-M6-BLIND", {p["sku"] for p in res["products"]})
+
+    def test_boring_holder_bare_number(self):
+        # B7: державка расточная 16 -> диаметр хвоста 16
+        q = Query("державка расточная 16")
+        self.assertEqual(q.family, "holder")
+        self.assertEqual(q.attrs.get("shank_mm"), 16.0)
+        self.assertTrue(q.shank_round)
+
+    def test_group_without_params_asks_clarification(self):
+        # B9: просто «фреза» без параметров -> просим уточнить
+        res = self.engine.search("фреза")
+        self.assertEqual(res["level"], "уточните параметры")
+        self.assertEqual(res["products"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

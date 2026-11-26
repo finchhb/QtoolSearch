@@ -21,6 +21,7 @@ import urllib.request
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from build_catalog import parse_turning
+from src.code_normalize import homoglyph_latin
 from src.xlsx_reader import Sheet, find_header_row, header_index, read_workbook, schema_hash
 
 DATA_DIR = os.environ.get("ADVISOR_DATA_DIR", "data")
@@ -390,9 +391,16 @@ def extract_thread(name: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     g = _RE_PIPE.search(up)
     if g:
-        out["thread"] = f"G{g.group(1)}"
-        out["thread_type"] = "pipe"
-        return out
+        # Не ловить G\d+ внутри кода пластины (например СМТG120408 -> CNMG120408,
+        # где Г — омоглиф G, а G120408 — часть кода, а не резьба).
+        before = up[:g.start()]
+        before_norm = homoglyph_latin(before).upper()
+        if re.search(r"[A-Z]{2,5}$", before_norm) or re.search(r"[A-Z]{2,4}\d{2,4}$", before_norm):
+            pass  # G — часть кода пластины, пропускаем
+        else:
+            out["thread"] = f"G{g.group(1)}"
+            out["thread_type"] = "pipe"
+            return out
     inch = _RE_INCH.search(up)
     if inch and "/" in inch.group(1):
         kind = (inch.group(3) or "UNC").upper()
@@ -417,6 +425,8 @@ def extract_thread(name: str) -> Dict[str, Any]:
             out["tap_kind"] = "pipe"
         elif "коническ" in low:
             out["tap_kind"] = "taper"
+        elif "глухо" in low:
+            out["tap_kind"] = "blind"
         elif "сквозн" in low or "м/р" in low:
             out["tap_kind"] = "through"
     return out
@@ -1090,7 +1100,7 @@ def http_get(url: str, timeout: int = 90, headers: Optional[Dict[str, str]] = No
 def _url_exists(url: str) -> bool:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT}, method="HEAD")
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_context()) as resp:
             if resp.status == 200:
                 return int(resp.headers.get("Content-Length") or 0) > 0
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):

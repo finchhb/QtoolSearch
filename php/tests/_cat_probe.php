@@ -1,0 +1,1 @@
+<?php require __DIR__."/../src/Autoload.php"; $s=new Qtool\Storage(); $items=$s->loadCatalogItems(); $want=json_decode(file_get_contents("php://stdin"),true); $by=[]; foreach($items as $it){$by[$it["sku"]]=$it;} $out=[]; foreach($want as $sku){$out[]=$by[$sku]??null;} echo json_encode($out,JSON_UNESCAPED_UNICODE);

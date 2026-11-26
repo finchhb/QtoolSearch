@@ -376,6 +376,14 @@ class AnalogsEngine:
                     detected_grade = h["grade"]
                     heur_info = h
                     break
+            # B11: убрать буквенный префикс у марки (PM4325 → 4325)
+            if not detected_grade:
+                for tok in re.findall(r"[A-ZА-Я]{2,}[0-9]{2,}", rest_text):
+                    stripped = re.sub(r"^[A-ZА-Я]+", "", tok)
+                    if stripped and stripped in all_known_grades:
+                        detected_grade = stripped
+                        heur_info = self.infer_grade_heuristic(stripped)
+                        break
         else:
             heur_info = self.infer_grade_heuristic(detected_grade)
 
