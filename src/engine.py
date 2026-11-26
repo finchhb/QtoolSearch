@@ -30,7 +30,7 @@ from build_catalog import (
 )
 from src import iso1832, rates, training
 from src.analogs_engine import AnalogsEngine
-from src.catalog_search import CatalogSearchEngine
+from src.catalog_search import CatalogSearchEngine, material_iso, operation_from_text
 from src.clarification_advisor import ClarificationAdvisor
 from src.hybrid_search import HybridSearchEngine
 from src.llm_client import LLMClient
@@ -653,12 +653,12 @@ class ToolAdvisorEngine:
     # ------------------------------------------------------------------------------------------
     # Основной вход: внутренний парсер отвечает всегда; LLM лишь проверяет параметры (src/reviewer.py)
     # ------------------------------------------------------------------------------------------
-    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool) -> Dict[str, Any]:
+    def _process_multi(self, positions: List[Dict[str, Any]], allow_review: bool, force_local: bool = False) -> Dict[str, Any]:
         """Несколько позиций в одном запросе: каждая ищется отдельно, ответ объединяется."""
         texts, all_prods, steps, first = [], [], [], None
         seen = set()
         for i, pos in enumerate(positions, 1):
-            r = self.process_query_autonomous(pos["text"], allow_review=allow_review)
+            r = self.process_query_autonomous(pos["text"], allow_review=allow_review, force_local=force_local)
             if first is None:
                 first = r
             qty = f" — {pos['qty']} шт" if pos.get("qty") else ""
@@ -679,8 +679,8 @@ class ToolAdvisorEngine:
         allow_review = False
         positions = iso1832.split_positions(user_query)
         if len(positions) > 1:
-            return self._process_multi(positions, allow_review)
-        res = self.process_query_autonomous(user_query, allow_review=allow_review)
+            return self._process_multi(positions, allow_review, force_local=force_local)
+        res = self.process_query_autonomous(user_query, allow_review=allow_review, force_local=force_local)
         res["provider"] = "site_catalog"
         res["model"] = "deterministic-catalog"
         res.setdefault("llm_status", "not_needed")
@@ -835,25 +835,66 @@ class ToolAdvisorEngine:
     # ------------------------------------------------------------------------------------------
     # Каталог сайта qtool.ru: ответ по всем группам (без LLM)
     # ------------------------------------------------------------------------------------------
+    _TRAIN_ATTR_MAP = (
+        ("correct_iso", "iso_group"), ("correct_operation", "operation"),
+        ("correct_shape", "plate_shape"), ("correct_size", "plate_size"),
+    )
+
     def _site_answer(self, user_query: str, site: CatalogSearchEngine) -> Dict[str, Any]:
-        # Точный пример технолога из таблицы обучения: показываем названные им позиции
-        example = training.lookup_exact(user_query)
-        pins = training.split_skus(example.get("correct_skus") or "") if example else []
-        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None)
+        # Пример технолога действует и в маршруте каталога сайта:
+        # точное совпадение запроса — пины артикулов + замена атрибутов парсера,
+        # похожий запрос (TF-IDF) — только заполнение недостающих атрибутов.
+        exact = training.lookup_exact(user_query)
+        example = exact or training.lookup(user_query)
+        pins = training.split_skus(exact.get("correct_skus") or "") if exact else []
+        overrides: Dict[str, Any] = {}
+        if example:
+            for src_key, dst_key in self._TRAIN_ATTR_MAP:
+                if example.get(src_key):
+                    overrides[dst_key] = example[src_key]
+            if example.get("correct_radius"):
+                try:
+                    overrides["corner_radius_mm"] = float(example["correct_radius"])
+                except ValueError:
+                    pass
+            if not exact:
+                # похожий запрос: явно названный в запросе материал/обработка важнее примера,
+                # но совпадающее значение оставляем (для запросов без группы парсер его не извлекает)
+                mi = material_iso(user_query)
+                if mi and mi != overrides.get("iso_group"):
+                    overrides.pop("iso_group", None)
+                op = operation_from_text(user_query)
+                if op and op != overrides.get("operation"):
+                    overrides.pop("operation", None)
+        res = site.search(user_query, limit=8, in_stock_only=True, pin_names=pins or None,
+                          attr_overrides=overrides or None, overrides_replace=bool(exact))
         if not res.get("products"):
             self._log_unrecognized(user_query)
         attrs = res.get("parsed") or {}
         parsed = {
             "iso": attrs.get("iso_group") or "", "operation": attrs.get("operation") or "",
-            "shape": attrs.get("insert_shape") or "", "size": attrs.get("size_code") or "",
+            "shape": attrs.get("insert_shape") or attrs.get("plate_shape") or "",
+            "size": attrs.get("size_code") or attrs.get("plate_size") or "",
             "code": res.get("insert_code") or attrs.get("iso_code") or "",
             "radius": attrs.get("corner_radius_mm"),
         }
+        text = self._format_site_response(res)
+        if example and (overrides or pins):
+            bits = []
+            if example.get("correct_iso"):
+                bits.append(f"ISO {example['correct_iso']}")
+            if example.get("correct_operation"):
+                bits.append(self._OP_NAMES.get(example["correct_operation"], example["correct_operation"]))
+            note = f"> 📚 Применён пример технолога №{example['id']}" + (": " + ", ".join(bits) if bits else "")
+            if example.get("comment"):
+                note += f". {example['comment']}"
+            text = note + "\n\n" + text
+            res["trained_example"] = example["id"]
         return {
             "mode": "site_catalog", "decision": "site_search", "tool_called": "catalog_search",
             "tool_result": res,
             "tool_steps": [{"step": 1, "function": "catalog_search", "arguments": {"query": user_query}, "result": res}],
-            "response_text": self._format_site_response(res), "parsed": parsed,
+            "response_text": text, "parsed": parsed,
             "llm_checked": False, "llm_status": "not_needed",
         }
 
@@ -989,7 +1030,7 @@ class ToolAdvisorEngine:
                 lines.append(f"{i}. {tip}")
         return "\n".join(lines).strip()
 
-    def process_query_autonomous(self, user_query: str, allow_review: bool = False) -> Dict[str, Any]:
+    def process_query_autonomous(self, user_query: str, allow_review: bool = False, force_local: bool = False) -> Dict[str, Any]:
         self._current_user_query = user_query
         lower = user_query.lower()
         is_analog_request = any(w in lower for w in ["аналог", "замен", "кросс", "вместо", "эквивалент"])
@@ -1006,7 +1047,7 @@ class ToolAdvisorEngine:
 
         # 2. Каталог сайта qtool.ru (/upload): все группы одним детерминированным поиском,
         # включая подбор совместимого инструмента («державка под пластину CNMG»).
-        site = self.get_site_engine()
+        site = None if force_local else self.get_site_engine()
         if site is not None:
             return self._site_answer(user_query, site)
 

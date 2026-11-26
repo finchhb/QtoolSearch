@@ -2,6 +2,7 @@
 src/training.py - обучение парсера на примерах технолога с векторным поиском схожести (TF-IDF / Cosine Similarity).
 """
 import csv
+import logging
 import math
 import os
 import re
@@ -9,8 +10,20 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from src.code_normalize import homoglyph_latin
+
+logger = logging.getLogger(__name__)
+
 PATH = os.path.join("data", "training_examples.csv")
 MATERIALS_CSV = os.path.join("data", "materials.csv")
+# порог косинусной близости для «похожего» запроса; настраивается без правки кода
+try:
+    SIM_THRESHOLD = min(1.0, max(0.0, float(os.environ.get("QTOOL_TRAIN_SIM_THRESHOLD", "0.35"))))
+except ValueError:
+    SIM_THRESHOLD = 0.35
+# поля-поправки, которые влияют на поиск; comment — только для админки
+TRAIN_FIELDS = ("correct_iso", "correct_operation", "correct_skus", "correct_shape", "correct_size", "correct_radius")
+CORRECTION_FIELDS = TRAIN_FIELDS + ("comment",)
 FIELDS = [
     "id", "ts", "query", "query_norm", "parser_iso", "parser_operation", "parser_top_skus",
     "correct_iso", "correct_operation", "correct_shape", "correct_size", "correct_radius",
@@ -19,9 +32,9 @@ FIELDS = [
 SHAPE_OK = set("ABCDEFGHKLMOPRSTVW")
 ISO_OK = {"P", "M", "K", "N", "S", "H"}
 OP_OK = {"finishing", "semi_finishing", "roughing"}
-_LATIN2CYR = str.maketrans("abcehkmoptxy", "авсенкмортху")
+_LATIN2CYR = str.maketrans("abcehkmoptxygd", "авсенкмортхугд")
 _lock = threading.Lock()
-_cache: Dict[str, Any] = {"mtime": 0.0, "rows": []}
+_cache: Dict[str, Any] = {"mtime": 0.0, "rows": [], "index": None, "exact": None}
 
 
 def normalize(text: str) -> str:
@@ -30,12 +43,33 @@ def normalize(text: str) -> str:
     t = re.sub(r"\bвелдон", "weldon", t)
     t = re.sub(r"\bбт(?=\d)", "вт", t)
     t = t.translate(_LATIN2CYR)
+    # визуальные двойники -> одна форма: «ГС4325» == «GC4325», «СNMG» == «CNMG»
+    t = homoglyph_latin(t)
     t = re.sub(r"[^\w\-]+", " ", t, flags=re.U)
     return re.sub(r"\s+", " ", t).strip()
 
 
 def _tokenize(text: str) -> List[str]:
     return [w for w in normalize(text).split() if len(w) > 1]
+
+
+def _build_index(rows: List[Dict[str, str]]) -> Dict[str, Any]:
+    """TF-IDF векторы примеров: один раз на версию файла, а не на каждый запрос."""
+    docs = [_tokenize(r["query"]) for r in rows]
+    df: Dict[str, int] = {}
+    for toks in docs:
+        for t in set(toks):
+            df[t] = df.get(t, 0) + 1
+    n = len(rows)
+    vecs = []
+    for toks in docs:
+        tf: Dict[str, int] = {}
+        for t in toks:
+            tf[t] = tf.get(t, 0) + 1
+        v = {t: c * (math.log(n / df[t]) + 1.0) for t, c in tf.items()}
+        norm = math.sqrt(sum(x * x for x in v.values())) or 1.0
+        vecs.append({t: x / norm for t, x in v.items()})
+    return {"df": df, "vecs": vecs, "n": n}
 
 
 def _read() -> List[Dict[str, str]]:
@@ -51,9 +85,10 @@ def _read() -> List[Dict[str, str]]:
             for r in csv.DictReader(f, delimiter=";"):
                 if (r.get("query") or "").strip():
                     rows.append({k: (r.get(k) or "") for k in FIELDS})
-    except Exception:
+    except Exception as e:
+        logger.warning("Таблица обучения %s не читается (%s); примеры не применяются", PATH, e)
         rows = []
-    _cache.update(mtime=mt, rows=rows)
+    _cache.update(mtime=mt, rows=rows, index=None, exact=None)
     return rows
 
 
@@ -67,7 +102,7 @@ def _write(rows: List[Dict[str, str]]) -> None:
         _cache["mtime"] = os.path.getmtime(PATH)
     except OSError:
         pass
-    _cache["rows"] = rows
+    _cache.update(rows=rows, index=None, exact=None)
 
 
 def list_examples(limit: int = 300) -> List[Dict[str, str]]:
@@ -92,7 +127,7 @@ def add_example(
     correct_radius: str = "",
     *args,
     **kwargs,
-) -> Dict[str, str]:
+) -> Optional[Dict[str, str]]:
     iso = (correct_iso or "").strip().upper()
     op = (correct_operation or "").strip().lower()
     op = {"medium": "semi_finishing"}.get(op, op)
@@ -118,6 +153,9 @@ def add_example(
         "status": "new",
         "rules_added": "",
     }
+    # нечему учиться — не засоряем таблицу (валидация живёт здесь, а не в app.py)
+    if not any(entry[k] for k in CORRECTION_FIELDS):
+        return None
     with _lock:
         rows = list(_read())
         rows = [r for r in rows if r["query_norm"] != entry["query_norm"]]
@@ -137,79 +175,77 @@ def delete_example(ex_id: str) -> bool:
         return True
 
 
-def lookup(query: str) -> Optional[Dict[str, str]]:
-    if os.environ.get("TRAINING_DISABLE") == "1":
-        return None
-    with _lock:
-        rows = [
-            r for r in _read()
-            if r.get("status") != "rejected"
-            and any(r.get(k) for k in ("correct_iso", "correct_operation", "correct_skus", "correct_shape", "correct_size", "correct_radius"))
-        ]
-    if not rows:
-        return None
-
-    q_norm = normalize(query)
-    for r in rows:
-        if normalize(r.get("query") or "") == q_norm:
-            return r
-
-    q_tokens = _tokenize(query)
-    if not q_tokens:
-        return None
-
-    doc_tokens_list = [_tokenize(r["query"]) for r in rows]
-    total_docs = len(rows)
-    df: Dict[str, int] = {}
-    for toks in doc_tokens_list:
-        for t in set(toks):
-            df[t] = df.get(t, 0) + 1
-
-    def get_vector(toks: List[str]) -> Dict[str, float]:
-        v: Dict[str, int] = {}
-        for t in toks:
-            v[t] = v.get(t, 0) + 1
-        norm_sq = 0.0
-        res: Dict[str, float] = {}
-        for t, tf in v.items():
-            idf = math.log(total_docs / df.get(t, 1)) + 1.0
-            val = tf * idf
-            res[t] = val
-            norm_sq += val * val
-        norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
-        return {k: w / norm for k, w in res.items()}
-
-    q_vec = get_vector(q_tokens)
-    best_match = None
-    best_score = 0.0
-
-    for idx, r in enumerate(rows):
-        d_vec = get_vector(doc_tokens_list[idx])
-        score = sum(q_vec[t] * d_vec[t] for t in q_vec if t in d_vec)
-        if score > best_score:
-            best_score = score
-            best_match = r
-
-    if best_match and best_score >= 0.35:
-        return best_match
-    return None
-
-
-def lookup_exact(query: str) -> Optional[Dict[str, str]]:
-    """Точно тот же запрос, что и в примере технолога: только для него ответ считаем эталонным."""
+def _exact_match(query: str) -> Optional[Dict[str, str]]:
+    """Точно тот же запрос (после нормализации), что и в примере технолога. O(1) по кэшу."""
     if os.environ.get("TRAINING_DISABLE") == "1":
         return None
     q_norm = normalize(query)
     if not q_norm:
         return None
     with _lock:
-        rows = list(_read())
-    for r in rows:
-        if r.get("status") == "rejected":
-            continue
-        if normalize(r.get("query") or "") == q_norm:
-            return r
+        rows = _read()
+        exact = _cache.get("exact")
+        if exact is None:
+            exact = {}
+            for r in rows:
+                if r.get("status") != "rejected":
+                    exact.setdefault(normalize(r.get("query") or ""), r)
+            _cache["exact"] = exact
+    return exact.get(q_norm)
+
+
+def _vector_search(query: str) -> Optional[Dict[str, str]]:
+    """Похожий запрос по TF-IDF / cosine similarity среди примеров с поправками."""
+    if os.environ.get("TRAINING_DISABLE") == "1":
+        return None
+    q_tokens = _tokenize(query)
+    if not q_tokens:
+        return None
+    with _lock:
+        rows = [r for r in _read()
+                if r.get("status") != "rejected" and any(r.get(k) for k in TRAIN_FIELDS)]
+        index = _cache.get("index")
+        if index is None:
+            # индекс строится по тому же отфильтрованному списку, по которому идёт оценка
+            index = _build_index(rows)
+            _cache["index"] = index
+    if not rows:
+        return None
+    df, vecs, total_docs = index["df"], index["vecs"], index["n"]
+    tf: Dict[str, int] = {}
+    for t in q_tokens:
+        tf[t] = tf.get(t, 0) + 1
+    q_vec: Dict[str, float] = {}
+    norm_sq = 0.0
+    for t, c in tf.items():
+        val = c * (math.log(total_docs / df.get(t, 1)) + 1.0)
+        q_vec[t] = val
+        norm_sq += val * val
+    norm = math.sqrt(norm_sq) if norm_sq > 0 else 1.0
+    q_vec = {k: w / norm for k, w in q_vec.items()}
+
+    best_match = None
+    best_score = 0.0
+    for idx, r in enumerate(rows):
+        d_vec = vecs[idx]
+        score = sum(q_vec[t] * d_vec[t] for t in q_vec if t in d_vec)
+        if score > best_score:
+            best_score = score
+            best_match = r
+
+    if best_match and best_score >= SIM_THRESHOLD:
+        return best_match
     return None
+
+
+def lookup(query: str) -> Optional[Dict[str, str]]:
+    """Сначала точное совпадение запроса, затем векторный поиск похожего."""
+    return _exact_match(query) or _vector_search(query)
+
+
+def lookup_exact(query: str) -> Optional[Dict[str, str]]:
+    """Точно тот же запрос, что и в примере технолога: только для него ответ считаем эталонным."""
+    return _exact_match(query)
 
 
 def split_skus(value: str) -> List[str]:

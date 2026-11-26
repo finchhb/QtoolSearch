@@ -27,6 +27,11 @@ from src.xlsx_reader import Sheet, find_header_row, header_index, read_workbook,
 DATA_DIR = os.environ.get("ADVISOR_DATA_DIR", "data")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 SITE_CSV = os.path.join(DATA_DIR, "catalog_site.csv")
+# минимальная доля прежнего объёма каталога для принятия нового снимка (защита от битых выгрузок)
+try:
+    SNAPSHOT_MIN_RATIO = min(1.0, max(0.0, float(os.environ.get("QTOOL_SNAPSHOT_MIN_RATIO", "0.8"))))
+except ValueError:
+    SNAPSHOT_MIN_RATIO = 0.8
 MANIFEST = os.path.join(DATA_DIR, "site_manifest.json")
 URLS_JSON = os.path.join(DATA_DIR, "site_urls.json")
 
@@ -980,8 +985,8 @@ def build_site_catalog(files: Sequence[str], urls: Optional[Dict[str, str]] = No
     prev_total = int(prev.get("total") or 0)
     total = len(merged)
     warnings = []
-    if prev_total and total < prev_total * 0.8:
-        raise ValueError(f"Отклонение объёма каталога: было {prev_total}, стало {total} (< 80%). Снимок не подменён.")
+    if prev_total and total < prev_total * SNAPSHOT_MIN_RATIO:
+        raise ValueError(f"Отклонение объёма каталога: было {prev_total}, стало {total} (< {SNAPSHOT_MIN_RATIO:.0%}). Снимок не подменён.")
     if UNKNOWN_SECTIONS:
         warnings.append("Неизвестные разделы отправлены в карантин: " + "; ".join(UNKNOWN_SECTIONS[:10]))
 

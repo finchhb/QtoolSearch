@@ -1148,6 +1148,9 @@ class CatalogSearchEngine:
             attrs = it.get("attrs")
             if not attrs:
                 attrs = it["attrs"] = {}
+            # ключи для ответа технолога (pin): один раз при загрузке, а не на каждый запрос
+            it["_pin_name"] = homoglyph_latin(compact(str(it.get("name") or "")))
+            it["_pin_sku"] = homoglyph_latin(compact(str(it.get("sku") or "")))
             iso = str(attrs.get("iso_code") or "").strip().upper()
             if len(iso) >= 4:
                 prefixes[iso[:4]] = prefixes.get(iso[:4], 0) + 1
@@ -1616,7 +1619,9 @@ class CatalogSearchEngine:
 
     # ---- основной поиск --------------------------------------------------------------------------
     def search(self, text: str, limit: int = 8, in_stock_only: bool = True,
-               pin_names: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+               pin_names: Optional[Sequence[str]] = None,
+               attr_overrides: Optional[Dict[str, Any]] = None,
+               overrides_replace: bool = False) -> Dict[str, Any]:
         q = Query(text, self._insert_prefixes, self._by_family_and_code)
         if q.insert_code:
             q.insert_code = self._canonical_insert_code(q.insert_code)
@@ -1624,6 +1629,14 @@ class CatalogSearchEngine:
             fixed = self._canonical_insert_code(q.compat_insert)
             if fixed != q.compat_insert:
                 q._set_compat(fixed)
+        if attr_overrides:
+            # поправки технолога из таблицы обучения: точное совпадение запроса — заменяем
+            # атрибуты парсера, похожий запрос (TF-IDF) — только заполняем недостающие
+            for k, v in attr_overrides.items():
+                if v in (None, ""):
+                    continue
+                if overrides_replace or q.attrs.get(k) in (None, ""):
+                    q.attrs[k] = v
         if pin_names:
             pinned = self._search_pinned(q, pin_names, limit, in_stock_only)
             if pinned:
@@ -1734,8 +1747,8 @@ class CatalogSearchEngine:
     @staticmethod
     def _pinned_match(value: Any, want: str) -> bool:
         """Артикул из ответа технолога совпадает с началом названия/артикула позиции."""
-        v = compact(str(value or ""))
-        w = compact(str(want or ""))
+        v = homoglyph_latin(compact(str(value or "")))
+        w = homoglyph_latin(compact(str(want or "")))
         if not v or not w:
             return False
         if v == w:
@@ -1747,13 +1760,16 @@ class CatalogSearchEngine:
                        in_stock_only: bool) -> Optional[Dict[str, Any]]:
         """Ответ технолога из таблицы обучения: показываем именно названные позиции."""
         pool, seen = [], set()
+        wants = [homoglyph_latin(compact(str(n or ""))) for n in names]
+        wants = [w for w in wants if w]
         for fam_pool in self.by_family.values():
             for it in fam_pool:
                 key = it.get("id") or id(it)
                 if key in seen:
                     continue
-                if any(self._pinned_match(it.get("name"), n) or self._pinned_match(it.get("sku"), n)
-                       for n in names):
+                v_name, v_sku = it.get("_pin_name", ""), it.get("_pin_sku", "")
+                if any(v == w or (v.startswith(w) and not v[len(w):len(w) + 1].isdigit())
+                       for w in wants for v in (v_name, v_sku) if v):
                     pool.append(it)
                     seen.add(key)
         if not pool:
