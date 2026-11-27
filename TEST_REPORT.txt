@@ -15,6 +15,14 @@ NEW RULES ADDED:
 1. If query contains manufacturer article number or site article number -> output only that single item (exact match)
 2. If query contains brand name -> output only items of that brand (hard filter)
 
+NEW FEATURE ADDED:
+------------------
+3. Search for inserts by holder code:
+   - "S20R-SVXCL16 пластины" -> inserts compatible with holder
+   - "под S20R-SVXCL16" -> inserts compatible with holder
+   - "пластины под S20R-SVXCL16" -> inserts compatible with holder
+   - Works for both full holder codes (S20R-SVXCL16) and short codes (MCLNR2525M12, SCLCR09)
+
 CHANGES MADE:
 -------------
 Files modified:
@@ -34,6 +42,9 @@ Files modified:
   - Brand detection: explicit "бренд/марка/производитель" OR known brand names (DESKAR, ZZKLT, OLICNC, ZEGYO) in Latin or Cyrillic
   - Brand filter changed from soft to hard (strict filtering by brand)
   - Cyrillic brand aliases: дескар, ззклт, олицнк, зеге, зегйо
+  - Added stop words for insert prefixes (под, для, к, на, в, etc.) to prevent false matches
+  - Added holder code rejection in _parse_compat_insert to prevent holder codes being treated as insert codes
+  - Added holder->insert search: detects "holder_code пластины", "под holder_code", "пластины под holder_code" patterns
 
 ==============================================
 TEST 1: Issue 1 - SCLCR09 deskar dkr
@@ -140,23 +151,15 @@ TEST 7: Rule 2 - Brand Filter -> Only That Brand
   фреза ZZKLT            -> only ZZKLT items (0 results - no ZZKLT mills)  PASS
 
 ==============================================
-TEST 8: Additional Article Numbers
+TEST 8: New Feature - Holder -> Insert Search
 ==============================================
-  35569 -> 1 match (SCLCR1212H06)  PASS
-  53554 -> 1 match (SCLCR1212H09)  PASS
-  35570 -> 1 match (SCLCR1616H09)  PASS
-  53556 -> 1 match (SCLCR2020K09 DKR)  PASS
-  53558 -> 1 match (SCLCR2525M09)  PASS
-  35549 -> 1 match (S16Q-SCLCR09)  PASS
-
-==============================================
-TEST 9: Additional Manufacturer Codes
-==============================================
-  SCLCR1212H06 -> 1 match  PASS
-  SCLCR1616H09 -> 1 match  PASS
-  SCLCR2020K09 -> 2 matches  PASS
-  MCLNR2525M12 -> 3 matches  PASS
-  DCLNR3232P12 -> 1 match  PASS
+  S20R-SVXCL16 пластины    -> family=insert, total=77  PASS (VC*T16 inserts)
+  под S20R-SVXCL16         -> family=insert, total=77  PASS
+  пластины под S20R-SVXCL16 -> family=insert, total=77  PASS
+  MCLNR2525M12 пластины    -> family=insert, total=506  PASS (CN*12 inserts)
+  под MCLNR2525M12         -> family=insert, total=506  PASS
+  пластины под MCLNR2525M12 -> family=insert, total=506  PASS
+  SCLCR1212H06 пластины    -> family=insert, total=152  PASS (CC*06 inserts)
 
 ==============================================
 VERIFICATION SCRIPT RESULTS (verify_bugs.py)
@@ -179,6 +182,7 @@ Issue 2a: FIXED - Article number search (35569) returns exact match (1 result)
 Issue 2b: FIXED - Manufacturer code search (SCLCR1212H06) returns exact match (1 result)
 Rule 1: IMPLEMENTED - Article number/manufacturer code -> exact match, 1 result
 Rule 2: IMPLEMENTED - Brand name in query -> strict brand filter (only that brand)
+New Feature: IMPLEMENTED - Holder code search for compatible inserts ("holder_code пластины", "под holder_code")
 All short holder code variants (SCLCR09, SCLCR/L-09, MCLNR12, PWLN08, DCLN12, etc.) now work correctly
 Insert codes with T-format (DCGT11T302, TCMT16T304) now work correctly
 Brand detection works for Latin (DESKAR, ZZKLT, OLICNC, ZEGYO) and Cyrillic (дескар, ззклт, олицнк, зеге, зегйо)

@@ -187,6 +187,11 @@ def insert_prefix_from_word(raw: str, known: Iterable[str] = ()) -> Optional[str
     return None
 
 
+INSERT_STOP_WORDS = {
+    "ПОД", "POD", "ДЛЯ", "DLYA", "К", "K", "НА", "NA", "В", "V", "ИЗ", "IZ", "ПО", "PO", "С", "S", "О", "O", "ОБ", "OB", "ОТ", "OT", "ДО", "DO", "ПРИ", "PRI", "ЧЕРЕЗ", "CHEREZ", "НАД", "NAD", "ПЕРЕД", "PERED", "ЗА", "ZA", "У", "U", "УЖЕ", "UZHE", "УЖ", "UZH", "БЕЗ", "BEZ", "ПРО", "PRO", "МЕЖ", "MEZH", "СРЕДИ", "SREDI"
+}
+
+
 def insert_code_from_text(text: str) -> Optional[str]:
     """CNMG 12 04 08 / CNMG120408 -> CNMG120408. Хвост из букв (стружколом) не приклеиваем."""
     src = cyrillic_code_letters((text or "").lower().replace("ё", "е")).upper()
@@ -205,6 +210,8 @@ def insert_code_from_text(text: str) -> Optional[str]:
                     return tok
             continue
         if re.fullmatch(r"[A-Z]{2,5}", tok):
+            if tok in INSERT_STOP_WORDS:
+                continue  # стоп-слово (предлог), не префикс пластины
             if tok[0] not in _INSERT_SHAPES or tok[:4] in _HOLDER_PREFIXES:
                 continue  # не пластина (оснастка или транслитерированное слово)
             digits = ""
@@ -419,13 +426,40 @@ class Query:
                 if re.search(pattern, low):
                     self.family = fam
                     break
-        # «сверло с квадратной пластиной» — корпус сверла под пластину, а не пластина:
+# «сверло с квадратной пластиной» — корпус сверла под пластину, а не пластина:
         # в группу пластин уводит только пластина, названная раньше сверла
         if self.family == "insert" and re.search(r"сверл", low):
             i_drill = low.find("сверл")
             i_plate = low.find("пластин")
             if i_plate < 0 or i_drill < i_plate:
                 self.family = "drill"
+
+        # НОВОЕ: «S20R-SVXCL16 пластины», «под S20R-SVXCL16» — подбор пластин под державку
+        # Ищем код державки, за которым следует слово "пластин" или "под" в начале
+        holder_for_inserts = None
+        # Паттерн: код державки + "пластин" (плaстины, пластину, подобрать пластины)
+        holder_plate_match = re.search(
+            r"([A-Z0-9]{4,}[-]?[A-Z0-9]*)\s+(?:пластин|подобрать\s+пластин|под\s+пластин)",
+            self.text, re.I)
+        if holder_plate_match:
+            holder_for_inserts = holder_code_from_text(holder_plate_match.group(1))
+        # Паттерн: "под" + код державки (в начале или после слова)
+        elif re.search(r"^\s*под\s+", low) or re.search(r"\bпод\s+[A-Za-z0-9]{4,}", low):
+            # Извлекаем код после "под"
+            under_match = re.search(r"под\s+([A-Za-z0-9]{4,}[-]?[A-Za-z0-9]*)", self.text, re.I)
+            if under_match:
+                holder_for_inserts = holder_code_from_text(under_match.group(1))
+
+        if holder_for_inserts:
+            info = holder_insert_compat(holder_for_inserts)
+            if info and info.get("size"):
+                self.family = "insert"
+                self.holder_compat_requested = True
+                self.holder_code = holder_for_inserts
+                self.holder_compat = info
+                self.holder_compat_code = holder_for_inserts
+                self.compat_requested = True
+
         for cat, pattern in CATEGORY_HINTS.get(self.family or "", []):
             if re.search(pattern, low):
                 self.category_hints.append(cat)
@@ -832,7 +866,11 @@ class Query:
                 continue
             if not digits and word not in self._insert_prefixes and word not in _COMMON_INSERT_PREFIXES:
                 continue
-            self._set_compat(word + digits)
+            # Отвергаем коды, которые на самом деле являются кодами державок
+            combined = word + digits
+            if parse_holder_code(combined):
+                continue
+            self._set_compat(combined)
             return m.start(), m.end()
         return None
 
@@ -1563,8 +1601,9 @@ class CatalogSearchEngine:
             if q.compat_insert:
                 return self._search_compat(q, limit, in_stock_only)
             return self._search_ambiguous(q, limit, in_stock_only)
-        if q.compat_requested and not q.compat_insert:
+        if q.compat_requested and not q.compat_insert and not q.holder_compat:
             # «под пластину Ромб 09»: форма и размер названы — код пластины не нужен
+            # Но не срабатываем, если holder_compat установлен (подбор пластин под державку)
             if not (q.family == "holder" and q.compat_shape and q.compat_size):
                 return self._compat_ask_code(q)
         if q.holder_compat_requested and not q.holder_compat:
