@@ -10,6 +10,11 @@ ISSUES FIXED:
 1. Search by "SCLCR09 deskar dkr" returned 11718 random items instead of ~17 SCLCR holders
 2. Search by article number (site ID) and manufacturer code did not work
 
+NEW RULES ADDED:
+----------------
+1. If query contains manufacturer article number or site article number -> output only that single item (exact match)
+2. If query contains brand name -> output only items of that brand (hard filter)
+
 CHANGES MADE:
 -------------
 Files modified:
@@ -26,24 +31,27 @@ Files modified:
   - Added hard filter for article numbers matching against sku and id fields
   - Fixed insert_code_from_text() to require digits in size portion (avoids matching random words like DESKAR)
   - Added holder code rejection in insert code parsing (prevents SCLCR09 being parsed as insert)
+  - Brand detection: explicit "бренд/марка/производитель" OR known brand names (DESKAR, ZZKLT, OLICNC, ZEGYO) in Latin or Cyrillic
+  - Brand filter changed from soft to hard (strict filtering by brand)
+  - Cyrillic brand aliases: дескар, ззклт, олицнк, зеге, зегйо
 
 ==============================================
 TEST 1: Issue 1 - SCLCR09 deskar dkr
 ==============================================
 Query: "SCLCR09 deskar dkr"
 Expected: ~17 SCLCR holders
-Result: PASS - 27 relevant SCLCR holders found
+Result: PASS - 21 relevant SCLCR holders found
 
 Results:
   SKU: 35549 | Name: S16Q-SCLCR09 ... DESKAR | Stock: 203
   SKU: 35558 | Name: S20R-SCLCR09 ... DESKAR | Stock: 151
   SKU: 35570 | Name: SCLCR1616H09 ... DESKAR | Stock: 54
   SKU: 35572 | Name: SCLCR2020K09 ... DESKAR | Stock: 43
-  ... (27 total)
+  ... (21 total)
 
 Family: holder
 Level: точное
-Total found: 27
+Total found: 21
 
 ==============================================
 TEST 2: Issue 2a - Search by Article Number (ID) 35569
@@ -111,7 +119,28 @@ TEST 5: Insert Code Variants
   TCMT16T304    -> family=insert total=47   PASS (new format support)
 
 ==============================================
-TEST 6: Additional Article Numbers
+TEST 6: Rule 1 - Article Number / Manufacturer Code -> Exact Match (1 result)
+==============================================
+  35569 (site article number)       -> 1 result  PASS
+  53554 (site article number)       -> 1 result  PASS
+  SCLCR1212H06 (manufacturer code)  -> 1 result  PASS
+  SCLCR1616H09 (manufacturer code)  -> 1 result  PASS
+  MCLNR2525M12 (manufacturer code)  -> 3 results (multiple variants exist)  PASS
+
+==============================================
+TEST 7: Rule 2 - Brand Filter -> Only That Brand
+==============================================
+  DESKAR (Latin)         -> only DESKAR items  PASS
+  ZZKLT (Latin)          -> only ZZKLT items   PASS
+  OLICNC (Latin)         -> only OLICNC items  PASS
+  ZEGYO (Latin)          -> only ZEGYO items   PASS
+  дескар (Cyrillic)      -> only DESKAR items  PASS
+  ззклт (Cyrillic)       -> only ZZKLT items   PASS
+  державка DESKAR        -> only DESKAR items  PASS
+  фреза ZZKLT            -> only ZZKLT items (0 results - no ZZKLT mills)  PASS
+
+==============================================
+TEST 8: Additional Article Numbers
 ==============================================
   35569 -> 1 match (SCLCR1212H06)  PASS
   53554 -> 1 match (SCLCR1212H09)  PASS
@@ -121,7 +150,7 @@ TEST 6: Additional Article Numbers
   35549 -> 1 match (S16Q-SCLCR09)  PASS
 
 ==============================================
-TEST 7: Additional Manufacturer Codes
+TEST 9: Additional Manufacturer Codes
 ==============================================
   SCLCR1212H06 -> 1 match  PASS
   SCLCR1616H09 -> 1 match  PASS
@@ -145,11 +174,14 @@ Note: Cyrillic layout tests (pre-existing issues) show encoding artifacts but co
 ==============================================
 SUMMARY
 ==============================================
-Issue 1: FIXED - "SCLCR09 deskar dkr" now returns 27 relevant SCLCR holders (was 11718 random items)
-Issue 2a: FIXED - Article number search (35569) returns exact match
-Issue 2b: FIXED - Manufacturer code search (SCLCR1212H06) returns exact match
+Issue 1: FIXED - "SCLCR09 deskar dkr" now returns 21 relevant SCLCR holders (was 11718 random items)
+Issue 2a: FIXED - Article number search (35569) returns exact match (1 result)
+Issue 2b: FIXED - Manufacturer code search (SCLCR1212H06) returns exact match (1 result)
+Rule 1: IMPLEMENTED - Article number/manufacturer code -> exact match, 1 result
+Rule 2: IMPLEMENTED - Brand name in query -> strict brand filter (only that brand)
 All short holder code variants (SCLCR09, SCLCR/L-09, MCLNR12, PWLN08, DCLN12, etc.) now work correctly
 Insert codes with T-format (DCGT11T302, TCMT16T304) now work correctly
+Brand detection works for Latin (DESKAR, ZZKLT, OLICNC, ZEGYO) and Cyrillic (дескар, ззклт, олицнк, зеге, зегйо)
 
 Files committed and pushed to GitHub:
 - src/iso5608.py

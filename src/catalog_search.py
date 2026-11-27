@@ -616,9 +616,29 @@ class Query:
             if op:
                 self.attrs["operation"] = op
 
+        # Detect brand: explicit "бренд/марка/производитель" or known brand name
         b = re.search(r"(?:бренд|марка|производител[ья])\s*[:—-]?\s*([a-zа-я0-9-]{2,20})", low)
         if b:
             self.brand = b.group(1)
+        else:
+            # Try to find known brand in query (Latin and Cyrillic)
+            for known_brand in BRAND_PRIORITY:
+                if known_brand.lower() in low:
+                    self.brand = known_brand.lower()
+                    break
+            # Cyrillic brand aliases (ё already normalized to е)
+            if not self.brand:
+                cyr_brands = {
+                    "дескар": "deskar",
+                    "ззклт": "zzklt",
+                    "олицнк": "olicnc",
+                    "зеге": "zegyo",
+                    "зегйо": "zegyo",
+                }
+                for cyr, lat in cyr_brands.items():
+                    if cyr in low:
+                        self.brand = lat
+                        break
 
         # Артикул сайта (ID) — 5-6 значное число в начале или отдельно
         art = re.search(r"(?<!\d)(\d{5,6})(?!\d)", self.text)
@@ -1405,7 +1425,7 @@ class CatalogSearchEngine:
         if a.get("hrc"):
             out.append(("HRC", False, lambda it: (it["attrs"].get("hrc") or 0) >= a["hrc"]))
         if q.brand:
-            out.append(("бренд", False, lambda it: it.get("_brand_norm") == compact(q.brand)))
+            out.append(("бренд", True, lambda it: it.get("_brand_norm") == compact(q.brand)))
         if q.category_hints:
             out.append(("тип", True, lambda it: it.get("category") in q.category_hints))
         return out
