@@ -192,22 +192,29 @@ def insert_code_from_text(text: str) -> Optional[str]:
     src = cyrillic_code_letters((text or "").lower().replace("ё", "е")).upper()
     toks = re.findall(r"[A-Z0-9]+", _fix_digit_letters(src))
     for i, tok in enumerate(toks):
-        if re.fullmatch(r"[A-Z]{2,5}\d{4,6}[A-Z]{0,4}", tok):
-            # MTJNR2525 пишется как 5 букв + 4 цифры, но это код державки, а не пластины.
-            if tok[0] in _INSERT_SHAPES and not parse_holder_code(tok):
-                return tok
+        # ISO insert codes: prefix (2-5 letters) + size code (4-6 alphanumeric containing digits, e.g., 120408, 11T302, 16T304)
+        # Require at least one digit in the size portion to avoid matching random words like DESKAR
+        if re.fullmatch(r"[A-Z]{2,5}[A-Z0-9]{4,6}[A-Z]{0,4}", tok):
+            # Check that the middle portion (after prefix) contains at least one digit
+            # Prefix is 2-5 letters, size code is 4-6 alphanumeric, suffix is 0-4 letters
+            # We need to verify the size code portion has digits
+            m = re.match(r"([A-Z]{2,5})([A-Z0-9]{4,6})([A-Z]{0,4})", tok)
+            if m and any(ch.isdigit() for ch in m.group(2)):
+                # MTJNR2525 пишется как 5 букв + 4 цифры, но это код державки, а не пластины.
+                if tok[0] in _INSERT_SHAPES and not parse_holder_code(tok):
+                    return tok
             continue
         if re.fullmatch(r"[A-Z]{2,5}", tok):
             if tok[0] not in _INSERT_SHAPES or tok[:4] in _HOLDER_PREFIXES:
                 continue  # не пластина (оснастка или транслитерированное слово)
             digits = ""
             j = i + 1
-            while j < len(toks) and re.fullmatch(r"\d{1,6}", toks[j]) and len(digits) < 6:
+            while j < len(toks) and re.fullmatch(r"[A-Z0-9]{1,6}", toks[j]) and len(digits) < 6:
                 if len(digits) + len(toks[j]) > 6:
                     break  # «CNMG 1204 4325»: 4325 — марка, а не продолжение кода
                 digits += toks[j]
                 j += 1
-            if 4 <= len(digits) <= 6:
+            if 4 <= len(digits) <= 6 and any(ch.isdigit() for ch in digits):
                 code = tok + digits
                 if not parse_holder_code(code):
                     return code
@@ -233,6 +240,13 @@ def holder_code_from_text(text: str) -> Optional[str]:
             return cand
         # Короткий код типа державки (4 буквы типа + рука) + / + рука: SCLCR/L -> пробуем приклеить размер
         if re.fullmatch(r"[A-Z]{5}/[LRN]", cand) and i + 1 < len(toks):
+            nxt = homoglyph_latin(toks[i + 1]).upper()
+            if re.fullmatch(r"\d{2}", nxt):
+                combined = cand + "-" + nxt
+                if parse_holder_code(combined):
+                    return combined
+        # Короткий код 4 буквы + / + рука: PWLN/L -> пробуем приклеить размер
+        if re.fullmatch(r"[A-Z]{4}/[LRN]", cand) and i + 1 < len(toks):
             nxt = homoglyph_latin(toks[i + 1]).upper()
             if re.fullmatch(r"\d{2}", nxt):
                 combined = cand + "-" + nxt
@@ -533,6 +547,9 @@ class Query:
             # после «под <пластина>» код уже ушёл в совместимость: группа по нему не определяется
             for v in (query_variants(code_text) if under else self.variants):
                 code = insert_code_from_text(v)
+                # Отвергаем коды, которые на самом деле являются кодами державок
+                if code and parse_holder_code(code):
+                    continue
                 if code and not compact(rev_holder or "").startswith(compact(code)):
                     self.insert_code = code
                     self.family = "insert"

@@ -258,6 +258,31 @@ def _parse_one(s: str) -> Optional[Dict[str, Any]]:
                    clearance=m.group(1)[3], hand=m.group(2),
                    insert_size=m.group(3),
                    series_key=f"{m.group(1)}-{m.group(3)}", turning=True)
+
+    # --- короткие коды с косой чертой 4 буквы: PWLN/L 08, PWLN/L-08 ---
+    m = re.match(r"^([A-Z]{4})/([LRN]).*?(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand=m.group(2),
+                   insert_size=m.group(3),
+                   series_key=f"{m.group(1)}-{m.group(3)}", turning=True)
+
+    # --- короткие коды 4 буквы + размер: PWLN08, DCLN12 (4 буквы типа + размер, без руки) ---
+    # Для кодов где рука не указана (обычно правая R по умолчанию)
+    m = re.match(r"^([A-Z]{4})(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand="R",
+                   insert_size=m.group(2),
+                   series_key=f"{m.group(1)}-{m.group(2)}", turning=True)
+
+    # --- короткие коды 4 буквы + дефис + размер: PWLN-08, DCLN-12 ---
+    m = re.match(r"^([A-Z]{4})-(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand="R",
+                   insert_size=m.group(2),
+                   series_key=f"{m.group(1)}-{m.group(2)}", turning=True)
     return None
 
 
