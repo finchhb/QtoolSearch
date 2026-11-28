@@ -111,6 +111,34 @@ certificate`), поставьте `pip install certifi` — код сам воз
 - `deploy/php/` — PHP-прокси для встроенного поиска на qtool.ru: `ai.php` (серверная часть,
   те же запросы, что у `/api/query`, плюс `feedback` и `clear`) и `ai-widget.js` (форма и вывод ответа).
 
+## Микросервис: API + Streamlit-виджет + бот MAX
+
+Поверх того же движка надстроены три точки входа от **единого ядра** (`src/service.py`,
+singleton `SearchService`): индекс держится в памяти только в процессе `api`, а виджет и бот
+ходят к нему по HTTP — нет трёх копий каталога в оперативной памяти.
+
+| Файл | Что это | Порт |
+|---|---|---|
+| `api.py` | Backend API (FastAPI): `/health`, `/search/single`, `/search/batch` (≤500 строк), `/admin/reload` (по `ADMIN_SECRET`) | 8000 |
+| `app_streamlit.py` | Веб-виджет: быстрый поиск + пакетный подбор (.xlsx/.csv/список) + выгрузка Excel; режим `<iframe>` через `?embed=true` | 8501 |
+| `bot_max.py` | Бот MAX: одиночный запрос, список, файл .xlsx/.csv, заявка на счёт; long polling или webhook | — |
+| `.streamlit/config.toml` | Тема, отключение телеметрии, CORS/XSRF для iframe | — |
+
+Запуск на сервере одной командой (Docker Compose, 3 контейнера, `restart: always`):
+
+```
+cp .env.example .env      # вписать MAX_BOT_TOKEN, ADMIN_SECRET, MANAGER_CHAT_ID
+docker compose up -d --build
+```
+
+Подробности, обновление каталога и встраивание виджета на сайт — в `DEPLOY.md`.
+
+- `POST /search/single` — `{"query": "CNMG 120408 PM 4325", "limit": 5}` → распознанный код,
+  исправленный запрос и топ-N с типом совпадения (точное / полный аналог / близкий аналог).
+- `POST /search/batch` — `{"queries": [...], "limit": 3}` → массив с привязкой к исходной строке
+  (включая `not_found`); пакет считается в пуле потоков (100 строк < 5 с).
+- `POST /admin/reload` — пересборка каталога (заголовок `X-Admin-Token: <ADMIN_SECRET>`).
+
 Режимы: `ADVISOR_MODE=local` (по умолчанию, слушает 127.0.0.1) и `public` (админка только
 по токену, CORS/iframe только для `ALLOWED_ORIGINS`, лимит запросов на IP). Переменные окружения
 описаны в шапке `app.py`. Для `deploy/php/ai.php` сервис слушает только loopback и запускается

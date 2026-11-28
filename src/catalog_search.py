@@ -12,6 +12,7 @@ src/catalog_search.py - детерминированный поиск по ка�
 """
 import math
 import re
+from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from src import rates
@@ -52,6 +53,7 @@ def operation_from_text(text: str) -> Optional[str]:
     return None
 
 
+@lru_cache(maxsize=200000)
 def compact(s: str) -> str:
     return re.sub(r"[^a-z0-9а-я]", "", (s or "").lower())
 
@@ -187,27 +189,41 @@ def insert_prefix_from_word(raw: str, known: Iterable[str] = ()) -> Optional[str
     return None
 
 
+INSERT_STOP_WORDS = {
+    "ПОД", "POD", "ДЛЯ", "DLYA", "К", "K", "НА", "NA", "В", "V", "ИЗ", "IZ", "ПО", "PO", "С", "S", "О", "O", "ОБ", "OB", "ОТ", "OT", "ДО", "DO", "ПРИ", "PRI", "ЧЕРЕЗ", "CHEREZ", "НАД", "NAD", "ПЕРЕД", "PERED", "ЗА", "ZA", "У", "U", "УЖЕ", "UZHE", "УЖ", "UZH", "БЕЗ", "BEZ", "ПРО", "PRO", "МЕЖ", "MEZH", "СРЕДИ", "SREDI"
+}
+
+
 def insert_code_from_text(text: str) -> Optional[str]:
     """CNMG 12 04 08 / CNMG120408 -> CNMG120408. Хвост из букв (стружколом) не приклеиваем."""
     src = cyrillic_code_letters((text or "").lower().replace("ё", "е")).upper()
     toks = re.findall(r"[A-Z0-9]+", _fix_digit_letters(src))
     for i, tok in enumerate(toks):
-        if re.fullmatch(r"[A-Z]{2,5}\d{4,6}[A-Z]{0,4}", tok):
-            # MTJNR2525 пишется как 5 букв + 4 цифры, но это код державки, а не пластины.
-            if tok[0] in _INSERT_SHAPES and not parse_holder_code(tok):
-                return tok
+        # ISO insert codes: prefix (2-5 letters) + size code (4-6 alphanumeric containing digits, e.g., 120408, 11T302, 16T304)
+        # Require at least one digit in the size portion to avoid matching random words like DESKAR
+        if re.fullmatch(r"[A-Z]{2,5}[A-Z0-9]{4,6}[A-Z]{0,4}", tok):
+            # Check that the middle portion (after prefix) contains at least one digit
+            # Prefix is 2-5 letters, size code is 4-6 alphanumeric, suffix is 0-4 letters
+            # We need to verify the size code portion has digits
+            m = re.match(r"([A-Z]{2,5})([A-Z0-9]{4,6})([A-Z]{0,4})", tok)
+            if m and any(ch.isdigit() for ch in m.group(2)):
+                # MTJNR2525 пишется как 5 букв + 4 цифры, но это код державки, а не пластины.
+                if tok[0] in _INSERT_SHAPES and not parse_holder_code(tok):
+                    return tok
             continue
         if re.fullmatch(r"[A-Z]{2,5}", tok):
+            if tok in INSERT_STOP_WORDS:
+                continue  # стоп-слово (предлог), не префикс пластины
             if tok[0] not in _INSERT_SHAPES or tok[:4] in _HOLDER_PREFIXES:
                 continue  # не пластина (оснастка или транслитерированное слово)
             digits = ""
             j = i + 1
-            while j < len(toks) and re.fullmatch(r"\d{1,6}", toks[j]) and len(digits) < 6:
+            while j < len(toks) and re.fullmatch(r"[A-Z0-9]{1,6}", toks[j]) and len(digits) < 6:
                 if len(digits) + len(toks[j]) > 6:
                     break  # «CNMG 1204 4325»: 4325 — марка, а не продолжение кода
                 digits += toks[j]
                 j += 1
-            if 4 <= len(digits) <= 6:
+            if 4 <= len(digits) <= 6 and any(ch.isdigit() for ch in digits):
                 code = tok + digits
                 if not parse_holder_code(code):
                     return code
@@ -222,7 +238,8 @@ def holder_code_from_text(text: str) -> Optional[str]:
     которые целиком состоят из латиницы (гомоглифы допускаются): «державка» после
     транслитерации иначе приклеивалась бы к коду.
     """
-    toks = re.findall(r"[A-Za-zА-Яа-яЁё0-9-]+", text or "")
+    # Добавляем '/' в токены для поддержки кодов вроде SCLCR/L-09
+    toks = re.findall(r"[A-Za-zА-Яа-яЁё0-9/-]+", text or "")
     for i, tok in enumerate(toks):
         letters = homoglyph_latin(tok)
         if any(ch.isalpha() and not ("A" <= ch.upper() <= "Z") for ch in letters):
@@ -230,6 +247,20 @@ def holder_code_from_text(text: str) -> Optional[str]:
         cand = letters.upper()
         if parse_holder_code(cand):
             return cand
+        # Короткий код типа державки (4 буквы типа + рука) + / + рука: SCLCR/L -> пробуем приклеить размер
+        if re.fullmatch(r"[A-Z]{5}/[LRN]", cand) and i + 1 < len(toks):
+            nxt = homoglyph_latin(toks[i + 1]).upper()
+            if re.fullmatch(r"\d{2}", nxt):
+                combined = cand + "-" + nxt
+                if parse_holder_code(combined):
+                    return combined
+        # Короткий код 4 буквы + / + рука: PWLN/L -> пробуем приклеить размер
+        if re.fullmatch(r"[A-Z]{4}/[LRN]", cand) and i + 1 < len(toks):
+            nxt = homoglyph_latin(toks[i + 1]).upper()
+            if re.fullmatch(r"\d{2}", nxt):
+                combined = cand + "-" + nxt
+                if parse_holder_code(combined):
+                    return combined
         if re.fullmatch(r"[A-Z]{1,6}", cand):
             digits = ""
             j = i + 1
@@ -351,6 +382,7 @@ class Query:
         self.holder_code: Optional[str] = None
         self.thread: Optional[str] = None
         self.brand: Optional[str] = None
+        self.article_number: Optional[str] = None
         self.free_tokens: List[str] = []
         self.compat_insert: Optional[str] = None
         self.compat_prefix: Optional[str] = None
@@ -396,13 +428,40 @@ class Query:
                 if re.search(pattern, low):
                     self.family = fam
                     break
-        # «сверло с квадратной пластиной» — корпус сверла под пластину, а не пластина:
+# «сверло с квадратной пластиной» — корпус сверла под пластину, а не пластина:
         # в группу пластин уводит только пластина, названная раньше сверла
         if self.family == "insert" and re.search(r"сверл", low):
             i_drill = low.find("сверл")
             i_plate = low.find("пластин")
             if i_plate < 0 or i_drill < i_plate:
                 self.family = "drill"
+
+        # НОВОЕ: «S20R-SVXCL16 пластины», «под S20R-SVXCL16» — подбор пластин под державку
+        # Ищем код державки, за которым следует слово "пластин" или "под" в начале
+        holder_for_inserts = None
+        # Паттерн: код державки + "пластин" (плaстины, пластину, подобрать пластины)
+        holder_plate_match = re.search(
+            r"([A-Z0-9]{4,}[-]?[A-Z0-9]*)\s+(?:пластин|подобрать\s+пластин|под\s+пластин)",
+            self.text, re.I)
+        if holder_plate_match:
+            holder_for_inserts = holder_code_from_text(holder_plate_match.group(1))
+        # Паттерн: "под" + код державки (в начале или после слова)
+        elif re.search(r"^\s*под\s+", low) or re.search(r"\bпод\s+[A-Za-z0-9]{4,}", low):
+            # Извлекаем код после "под"
+            under_match = re.search(r"под\s+([A-Za-z0-9]{4,}[-]?[A-Za-z0-9]*)", self.text, re.I)
+            if under_match:
+                holder_for_inserts = holder_code_from_text(under_match.group(1))
+
+        if holder_for_inserts:
+            info = holder_insert_compat(holder_for_inserts)
+            if info and info.get("size"):
+                self.family = "insert"
+                self.holder_compat_requested = True
+                self.holder_code = holder_for_inserts
+                self.holder_compat = info
+                self.holder_compat_code = holder_for_inserts
+                self.compat_requested = True
+
         for cat, pattern in CATEGORY_HINTS.get(self.family or "", []):
             if re.search(pattern, low):
                 self.category_hints.append(cat)
@@ -524,6 +583,9 @@ class Query:
             # после «под <пластина>» код уже ушёл в совместимость: группа по нему не определяется
             for v in (query_variants(code_text) if under else self.variants):
                 code = insert_code_from_text(v)
+                # Отвергаем коды, которые на самом деле являются кодами державок
+                if code and parse_holder_code(code):
+                    continue
                 if code and not compact(rev_holder or "").startswith(compact(code)):
                     self.insert_code = code
                     self.family = "insert"
@@ -590,9 +652,34 @@ class Query:
             if op:
                 self.attrs["operation"] = op
 
+        # Detect brand: explicit "бренд/марка/производитель" or known brand name
         b = re.search(r"(?:бренд|марка|производител[ья])\s*[:—-]?\s*([a-zа-я0-9-]{2,20})", low)
         if b:
             self.brand = b.group(1)
+        else:
+            # Try to find known brand in query (Latin and Cyrillic)
+            for known_brand in BRAND_PRIORITY:
+                if known_brand.lower() in low:
+                    self.brand = known_brand.lower()
+                    break
+            # Cyrillic brand aliases (ё already normalized to е)
+            if not self.brand:
+                cyr_brands = {
+                    "дескар": "deskar",
+                    "ззклт": "zzklt",
+                    "олицнк": "olicnc",
+                    "зеге": "zegyo",
+                    "зегйо": "zegyo",
+                }
+                for cyr, lat in cyr_brands.items():
+                    if cyr in low:
+                        self.brand = lat
+                        break
+
+        # Артикул сайта (ID) — 5-6 значное число в начале или отдельно
+        art = re.search(r"(?<!\d)(\d{5,6})(?!\d)", self.text)
+        if art and not self.insert_code and not self.holder_code:
+            self.article_number = art.group(1)
 
         common = extract_common(low)
         # В коде державки «M16» - размер пластины, а не метрическая резьба.
@@ -731,8 +818,9 @@ class Query:
             "надо", "хочу", "сверло", "сверла", "фреза", "фрезы", "метчик", "метчика", "державка",
             "державки", "мм", "шт", "цена", "стоимость", "сколько", "стоит", "с", "и", "или",
         }
+        # Артикулы сайта (ID) — 5-6 значные числа, не фильтруем их
         self.free_tokens = [t for t in tokenize(_apply_aliases(self.text))
-                            if t not in stop and len(t) > 1 and not re.fullmatch(r"\d+[.,]?\d*", t)]
+                            if t not in stop and len(t) > 1 and not (re.fullmatch(r"\d+[.,]?\d*", t) and len(t) < 5)]
         if self.compat_insert:
             self.free_tokens = [t for t in self.free_tokens if t != self.compat_insert.lower()]
         if self.holder_compat_code:
@@ -780,7 +868,11 @@ class Query:
                 continue
             if not digits and word not in self._insert_prefixes and word not in _COMMON_INSERT_PREFIXES:
                 continue
-            self._set_compat(word + digits)
+            # Отвергаем коды, которые на самом деле являются кодами державок
+            combined = word + digits
+            if parse_holder_code(combined):
+                continue
+            self._set_compat(combined)
             return m.start(), m.end()
         return None
 
@@ -1057,6 +1149,11 @@ class CatalogSearchEngine:
             it["_name_norm"] = compact(homoglyph_latin(str(it.get("name") or "")))
             code_src = " ".join(str(x) for x in (it.get("sku"), attrs.get("iso_code"), attrs.get("holder_code")) if x)
             it["_code_compact"] = compact(code_src)
+            # Предвычисляем компактные поля кода — _code_match вызывается на каждый элемент
+            # каталога для каждого запроса; без кэша это regex-вызовы на весь пакет.
+            it["_iso_compact"] = compact(str(attrs.get("iso_code") or ""))
+            it["_holder_compact"] = compact(str(attrs.get("holder_code") or ""))
+            it["_sku_compact"] = compact(str(it.get("sku") or ""))
             it["_brand_norm"] = compact(it.get("brand", ""))
             doc_tokens.append(toks)
             for t in toks:
@@ -1146,13 +1243,20 @@ class CatalogSearchEngine:
         want = compact(code)
         if not want:
             return 0, ""
-        attrs = item.get("attrs") or {}
-        iso = compact(str(attrs.get("iso_code") or ""))
+        iso = item.get("_iso_compact")
+        if iso is None:
+            attrs = item.get("attrs") or {}
+            iso = compact(str(attrs.get("iso_code") or ""))
         if iso and iso == want:
             return 3, "код"
-        if compact(str(attrs.get("holder_code") or "")) == want:
+        holder = item.get("_holder_compact")
+        if holder is None:
+            holder = compact(str((item.get("attrs") or {}).get("holder_code") or ""))
+        if holder == want:
             return 3, "код"
-        sku = compact(str(item.get("sku") or ""))
+        sku = item.get("_sku_compact")
+        if sku is None:
+            sku = compact(str(item.get("sku") or ""))
         if sku.startswith(want):
             after = sku[len(want):len(want) + 1]
             return (1, "часть кода") if after.isdigit() else (3, "код")
@@ -1168,6 +1272,10 @@ class CatalogSearchEngine:
         """[(имя, жёсткий, функция(item)->bool)] — порядок задаёт лесенку ослаблений."""
         a = q.attrs
         out = []
+        # Артикул сайта (ID) — жесткий фильтр, если указан
+        if q.article_number:
+            want = q.article_number
+            out.append(("артикул сайта", True, lambda it: compact(str(it.get("sku") or "")) == want or compact(str(it.get("id") or "")) == want))
         if fam == "insert":
             if q.insert_code:
                 # короткая запись «DCGT09»: сверяем префикс, размер отсекается отдельно,
@@ -1247,7 +1355,22 @@ class CatalogSearchEngine:
             if q.compat_insert or (q.compat_shape and q.compat_size):
                 out.append(("под пластину", True, lambda it: self._holder_fits(it, q)))
             if q.holder_code:
-                out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
+                # Для коротких кодов (SCLCR09, SCLCR/L-09) ищем по типу державки и размеру пластины
+                holder_info = parse_holder_code(q.holder_code)
+                if holder_info and holder_info.get("insert_size") and not holder_info.get("shank_mm"):
+                    # Короткий код: получаем тип держателя (4 буквы) и размер пластины
+                    holder_type = holder_info.get("shape")
+                    if holder_info.get("clamp"):
+                        holder_type = holder_info["clamp"] + holder_type
+                    if holder_info.get("style"):
+                        holder_type = holder_type + holder_info["style"]
+                    if holder_info.get("clearance"):
+                        holder_type = holder_type + holder_info["clearance"]
+                    # holder_type теперь например "SCLC"
+                    insert_size = holder_info.get("insert_size")
+                    out.append(("код (тип+размер)", True, lambda it: self._match_short_holder_code(it, holder_type, insert_size)))
+                else:
+                    out.append(("код", True, lambda it: self._code_match(it, q.holder_code)[0] > 0))
             if a.get("shank_mm"):
                 if a.get("shank_section"):
                     out.append(("сечение", True, lambda it: (
@@ -1354,7 +1477,7 @@ class CatalogSearchEngine:
         if a.get("hrc"):
             out.append(("HRC", False, lambda it: (it["attrs"].get("hrc") or 0) >= a["hrc"]))
         if q.brand:
-            out.append(("бренд", False, lambda it: it.get("_brand_norm") == compact(q.brand)))
+            out.append(("бренд", True, lambda it: it.get("_brand_norm") == compact(q.brand)))
         if q.category_hints:
             out.append(("тип", True, lambda it: it.get("category") in q.category_hints))
         return out
@@ -1408,6 +1531,32 @@ class CatalogSearchEngine:
             return False
         for code in it.get("_mill_inserts") or []:
             if code.startswith(want) or want.startswith(code):
+                return True
+        return False
+
+    @staticmethod
+    def _match_short_holder_code(it: Dict[str, Any], holder_type: str, insert_size: str) -> bool:
+        """Проверка короткого кода державки: SCLCR09 -> holder_type=SCLC, insert_size=09.
+        Каталог имеет полные коды двух типов:
+        - Наружные: SCLCR1616H09 (начинаются с holder_type + рука)
+        - Расточные/внутренние: S16Q-SCLCR09 (содержат holder_type + рука внутри)
+        """
+        holder_code = str((it.get("attrs") or {}).get("holder_code") or "").upper()
+        if not holder_code:
+            return False
+        # Полный префикс с рукой (например SCLCR для SCLC + R)
+        # holder_type = SCLC, рука может быть R/L/N
+        for hand in ("R", "L", "N"):
+            full_prefix = holder_type + hand
+            # Тип 1: наружные держатели - код начинается с полного префикса
+            if holder_code.startswith(full_prefix):
+                # Проверяем размер пластины (обычно в конце)
+                return insert_size in holder_code[-4:] or holder_code.endswith(insert_size)
+            # Тип 2: расточные/внутренние - код содержит полный префикс после дефиса
+            # например S16Q-SCLCR09, C06K-SCLCR06
+            if "-" + full_prefix + insert_size in holder_code:
+                return True
+            if "-" + full_prefix in holder_code and holder_code.endswith(insert_size):
                 return True
         return False
 
@@ -1466,8 +1615,9 @@ class CatalogSearchEngine:
             if q.compat_insert:
                 return self._search_compat(q, limit, in_stock_only)
             return self._search_ambiguous(q, limit, in_stock_only)
-        if q.compat_requested and not q.compat_insert:
+        if q.compat_requested and not q.compat_insert and not q.holder_compat:
             # «под пластину Ромб 09»: форма и размер названы — код пластины не нужен
+            # Но не срабатываем, если holder_compat установлен (подбор пластин под державку)
             if not (q.family == "holder" and q.compat_shape and q.compat_size):
                 return self._compat_ask_code(q)
         if q.holder_compat_requested and not q.holder_compat:

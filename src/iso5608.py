@@ -218,7 +218,7 @@ def _parse_one(s: str) -> Optional[Dict[str, Any]]:
                    series_key=f"{base[:4]}-{size_code or m.group(6)}",
                    turning=kind == BORING)
 
-    # --- наружные державки: DCLNR2525M12, DCLNR 2525M-12-M-A, DDJNR2020K1504 -----------------
+# --- наружные державки: DCLNR2525M12, DCLNR 2525M-12-M-A, DDJNR2020K1504 -----------------
     m = re.match(r"^([A-Z]{4})([LRN])-?(\d{2})(\d{2})([A-Z])?-?(\d{1,4})?(?:-?([A-Z0-9-]*))?$", s)
     if m:
         size = _size_code(m.group(6))
@@ -227,6 +227,62 @@ def _parse_one(s: str) -> Optional[Dict[str, Any]]:
                    shank_mm=float(m.group(3)), shank_width_mm=float(m.group(4)),
                    length_letter=m.group(5), insert_size=size,
                    series_key=f"{m.group(1)}-{size or m.group(6) or '?'}", turning=True)
+
+    # --- короткие коды наружных державок: SCLCR09, MCLNR12 (5 букв с рукой + размер) ---
+    # Формат: 5 букв (тип + рука) + двузначный размер пластины
+    m = re.match(r"^([A-Z]{5})(\d{2})$", s)
+    if m:
+        # Распаковываем: первые 4 буквы - тип, 5-я - рука
+        holder_type = m.group(1)[:4]
+        hand = m.group(1)[4]
+        return _mk(EXTERNAL, clamp=holder_type[0], shape=holder_type[1], style=holder_type[2],
+                   clearance=holder_type[3], hand=hand,
+                   insert_size=m.group(2),
+                   series_key=f"{holder_type}-{m.group(2)}", turning=True)
+
+    # --- короткие коды с дефисом: SCLCR-09, MCLNR-12 ---
+    m = re.match(r"^([A-Z]{5})-(\d{2})$", s)
+    if m:
+        holder_type = m.group(1)[:4]
+        hand = m.group(1)[4]
+        return _mk(EXTERNAL, clamp=holder_type[0], shape=holder_type[1], style=holder_type[2],
+                   clearance=holder_type[3], hand=hand,
+                   insert_size=m.group(2),
+                   series_key=f"{holder_type}-{m.group(2)}", turning=True)
+
+    # --- короткие коды с косой чертой: SCLCR/L-09, MCLNR/L-12 ---
+    # normalize_separators даёт SCLCR/L-09 (5 букв до слеша), разбираем как 4 буквы типа + рука
+    m = re.match(r"^([A-Z]{4})([LRN])/.*?(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand=m.group(2),
+                   insert_size=m.group(3),
+                   series_key=f"{m.group(1)}-{m.group(3)}", turning=True)
+
+    # --- короткие коды с косой чертой 4 буквы: PWLN/L 08, PWLN/L-08 ---
+    m = re.match(r"^([A-Z]{4})/([LRN]).*?(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand=m.group(2),
+                   insert_size=m.group(3),
+                   series_key=f"{m.group(1)}-{m.group(3)}", turning=True)
+
+    # --- короткие коды 4 буквы + размер: PWLN08, DCLN12 (4 буквы типа + размер, без руки) ---
+    # Для кодов где рука не указана (обычно правая R по умолчанию)
+    m = re.match(r"^([A-Z]{4})(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand="R",
+                   insert_size=m.group(2),
+                   series_key=f"{m.group(1)}-{m.group(2)}", turning=True)
+
+    # --- короткие коды 4 буквы + дефис + размер: PWLN-08, DCLN-12 ---
+    m = re.match(r"^([A-Z]{4})-(\d{2})$", s)
+    if m:
+        return _mk(EXTERNAL, clamp=m.group(1)[0], shape=m.group(1)[1], style=m.group(1)[2],
+                   clearance=m.group(1)[3], hand="R",
+                   insert_size=m.group(2),
+                   series_key=f"{m.group(1)}-{m.group(2)}", turning=True)
     return None
 
 
