@@ -1,0 +1,54 @@
+# QtoolSearch — запуск всего микросервиса одной командой:
+#   docker compose up -d --build
+#
+# Три контейнера:
+#   api       — Backend API (FastAPI), держит индекс в памяти (порт 8000).
+#   streamlit — веб-виджет для сайта/менеджеров (порт 8501).
+#   max-bot   — бот мессенджера MAX (long polling, порт не нужен).
+#
+# Все настройки — в файле .env (скопируйте из .env.example).
+
+services:
+  api:
+    build: .
+    image: qtoolsearch:latest
+    container_name: qtool_api
+    restart: always
+    env_file: .env
+    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  streamlit:
+    build: .
+    image: qtoolsearch:latest
+    container_name: qtool_streamlit
+    restart: always
+    env_file: .env
+    command: ["streamlit", "run", "app_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
+  max-bot:
+    build: .
+    image: qtoolsearch:latest
+    container_name: qtool_max_bot
+    restart: always
+    env_file: .env
+    command: ["python", "bot_max.py"]
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - api

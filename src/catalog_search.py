@@ -12,6 +12,7 @@ src/catalog_search.py - детерминированный поиск по ка�
 """
 import math
 import re
+from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from src import rates
@@ -52,6 +53,7 @@ def operation_from_text(text: str) -> Optional[str]:
     return None
 
 
+@lru_cache(maxsize=200000)
 def compact(s: str) -> str:
     return re.sub(r"[^a-z0-9а-я]", "", (s or "").lower())
 
@@ -1147,6 +1149,11 @@ class CatalogSearchEngine:
             it["_name_norm"] = compact(homoglyph_latin(str(it.get("name") or "")))
             code_src = " ".join(str(x) for x in (it.get("sku"), attrs.get("iso_code"), attrs.get("holder_code")) if x)
             it["_code_compact"] = compact(code_src)
+            # Предвычисляем компактные поля кода — _code_match вызывается на каждый элемент
+            # каталога для каждого запроса; без кэша это regex-вызовы на весь пакет.
+            it["_iso_compact"] = compact(str(attrs.get("iso_code") or ""))
+            it["_holder_compact"] = compact(str(attrs.get("holder_code") or ""))
+            it["_sku_compact"] = compact(str(it.get("sku") or ""))
             it["_brand_norm"] = compact(it.get("brand", ""))
             doc_tokens.append(toks)
             for t in toks:
@@ -1236,13 +1243,20 @@ class CatalogSearchEngine:
         want = compact(code)
         if not want:
             return 0, ""
-        attrs = item.get("attrs") or {}
-        iso = compact(str(attrs.get("iso_code") or ""))
+        iso = item.get("_iso_compact")
+        if iso is None:
+            attrs = item.get("attrs") or {}
+            iso = compact(str(attrs.get("iso_code") or ""))
         if iso and iso == want:
             return 3, "код"
-        if compact(str(attrs.get("holder_code") or "")) == want:
+        holder = item.get("_holder_compact")
+        if holder is None:
+            holder = compact(str((item.get("attrs") or {}).get("holder_code") or ""))
+        if holder == want:
             return 3, "код"
-        sku = compact(str(item.get("sku") or ""))
+        sku = item.get("_sku_compact")
+        if sku is None:
+            sku = compact(str(item.get("sku") or ""))
         if sku.startswith(want):
             after = sku[len(want):len(want) + 1]
             return (1, "часть кода") if after.isdigit() else (3, "код")

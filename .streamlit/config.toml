@@ -1,0 +1,29 @@
+# Конфигурация Streamlit-виджета QtoolSearch.
+# Подключается автоматически, если файл лежит в .streamlit/config.toml рядом с app_streamlit.py.
+
+[server]
+# Разрешаем встраивание в <iframe> на стороннем домене (сайт qtool.ru / rinscom.com).
+enableCORS = true
+enableXsrfProtection = true
+# Не открывать браузер автоматически (запуск в Docker/на сервере).
+headless = true
+# Виджет живёт за nginx/traefik; слушаем все интерфейсы внутри контейнера.
+address = "0.0.0.0"
+port = 8501
+
+[browser]
+# Не собирать телеметрию.
+gatherUsageStats = false
+
+[theme]
+# Цветовая схема под брендбук (фирменный синий qtool).
+primaryColor = "#2F5496"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F5FA"
+textColor = "#1A1A1A"
+font = "sans serif"
+
+[client]
+# Не показывать технические детали ошибок в виджете.
+showErrorDetails = false
+toolbarMode = "minimal"

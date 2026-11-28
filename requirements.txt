@@ -1,7 +1,21 @@
-# Основное приложение (app.py) работает на 100% стандартной библиотеке Python и НЕ требует внешних библиотек!
-# openpyxl нужен ТОЛЬКО для import_docs.py (импорт методичек компании из .xlsx).
-# Если файла нет, import_docs.py попросит установить: pip install openpyxl
-# openpyxl>=3.1
+# QtoolSearch — зависимости микросервиса (API + Streamlit + MAX-бот).
+# Версии жёстко зафиксированы для воспроизводимой сборки в Docker (см. DEPLOY.md).
 #
-# Опционально: альтернативная версия на Streamlit (сейчас не используется).
-# streamlit>=1.30.0
+# Старый app.py (веб-чат на стандартной библиотеке) внешних пакетов НЕ требует и
+# продолжает работать без этого файла. Эти библиотеки нужны новым точкам входа.
+
+# --- Backend API (api.py) ---
+fastapi==0.165.0
+uvicorn==0.54.0
+pydantic==2.14.4
+
+# --- Streamlit-виджет (app_streamlit.py) ---
+streamlit==1.67.0
+pandas==3.1.1
+requests==2.34.2
+
+# --- MAX-бот (bot_max.py) ---
+aiohttp==3.14.5
+
+# --- Выгрузка .xlsx (src/service.build_batch_xlsx) ---
+openpyxl==3.1.5
